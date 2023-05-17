@@ -37,7 +37,7 @@ const unsigned char maskGrillHigh = 0x08;
 /**********************************
   Declaration of global variables
 **********************************/
-volatile uint8_t tGrill = 100;
+volatile uint8_t tGrill = TGRILL_ON;
 volatile float sampledTempOven;
 volatile uint16_t slopeTemp;
 
@@ -53,25 +53,35 @@ void adcHook(uint16_t newAdcValue) {
   Temperature-realted tasks
 *****************************/
 void taskSimTemp() {
-  uint16_t tOven;
-  long mappedSlope;
+  int16_t tOven = 0;
+  float mappedSlope;
 
   while (1) {
     so.waitFlag(f_adc, maskAdcEvent);
     so.clearFlag(f_adc, maskAdcEvent);
 
-    mappedSlope = map(
-                    slopeTemp,
-                    MINIMUM_ADC_VALUE,
-                    MAXIMUM_ADC_VALUE,
-                    MINIMUM_SLOPE_VALUE,
-                    MAXIMUM_SLOPE_VALUE
-                  );
+    mappedSlope = map(slopeTemp,
+                      MINIMUM_ADC_VALUE,
+                      MAXIMUM_ADC_VALUE,
+                      MINIMUM_SLOPE_VALUE,
+                      MAXIMUM_SLOPE_VALUE
+                     );
+    Serial.print("Temperatura horno preCalc: "); Serial.println(tOven);
 
-    tOven = tGrill * mappedSlope;
+    if (tGrill == TGRILL_OFF)
+      mappedSlope = -mappedSlope;
 
-    //Serial.print("Temperatura horno: "); Serial.println(tOven); // DEBUG
-    //Serial.flush(); //DEBUG
+    tOven = round((float)tGrill * mappedSlope / 250.0) + tOven; // Funcion que simula la temperatura.
+
+    if (tOven < 0)  // Limita la temperatura mínima simulada.
+      tOven = 0;
+    if(tOven > TGRILL_ON) // Limita la temperatura máxima simulada.
+      tOven = TGRILL_ON;
+
+    Serial.print("mapped Slope: "); Serial.println(mappedSlope);
+    Serial.print("tGrill: "); Serial.println(tGrill);
+    Serial.print("Temperatura horno: "); Serial.println(tOven); // DEBUG
+    Serial.flush(); //DEBUG
 
     so.signalMBox(mb_tOven, (byte *) &tOven);
 
@@ -84,7 +94,7 @@ void taskSensorTemp() {
 
   while (1) {
     so.waitMBox(mb_tOven, (byte**) &tOvenMessage);
-    
+
 
     tOven = *tOvenMessage;
 
