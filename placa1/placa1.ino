@@ -1,24 +1,33 @@
-#include "HIB.h"
-#include "SO.h"
-#include "timerConfig.h"
+#include <mcp_can_uib.h>
+#include <mcp_can_uib_dfs.h>
+#include <SPI.h>
+
+#include <HIB.h>
+#include <SO.h>
+#include <timerConfig.h>
 
 #include "temperature.h"
 
-#define PERIOD_CONTROL_TEMP_TASK 4;
+#define PERIOD_CONTROL_TEMP_TASK 1;
 
 HIB hib;
 SO so;
+
+const int SPI_CS_PIN = 9;
+MCP_CAN CAN(SPI_CS_PIN);
 
 /****************************
   Declaration of semaphores
 ****************************/
 Sem s_tempOven;
 Sem s_tGrill;
+Sem s_goalTemp;
 
 /***************************
   Declaration of mailboxes
 ***************************/
 MBox mb_tOven;
+MBox mb_tempDataToSend;
 
 /***************************
   Declaration of mailboxes
@@ -33,6 +42,17 @@ Flag f_temp;
 const unsigned char maskGrillOff = 0x01;
 const unsigned char maskGrillOn = 0x02;
 
+// Flag and masks to send smoke or temperature
+// to taskTxCan
+Flag f_txCan;
+const unsigned char maskTempSend = 0x01;
+// TODO: CAMBIAR MÁSCARA A 2, EL 0X00 ES SOLO DE PRUEBA
+const unsigned char maskSmokeSend = 0x00;
+
+// Flag and mask for CAN ISR to tell taskRxCan
+// that a new message has been received
+Flag f_rxCan;
+const unsigned char maskCan = 0x01;
 
 /**********************************
   Declaration of global variables
@@ -40,6 +60,18 @@ const unsigned char maskGrillOn = 0x02;
 volatile uint8_t tGrill = TGRILL_OFF;
 volatile uint16_t sampledTempOven;
 volatile uint16_t slopeTemp;
+volatile uint16_t goalTemp = NO_TEMP_GOAL;
+
+/*****************
+  CAN RX ISR
+*****************/
+void ISR_CAN() {
+  char auxSREG;
+
+  auxSREG = SREG;
+  so.setFlag(f_rxCan, maskCan);
+  SREG = auxSREG;
+}
 
 /*****************
   ADC handling
@@ -56,6 +88,41 @@ void timer5Hook() {
   so.updateTime();
 }
 
+/************************
+  CAN tasks
+*************************/
+void taskRxCan() {
+  
+}
+
+void taskTxCan() {
+  int8_t value = 10;
+  unsigned char mask = (maskTempSend | maskSmokeSend);
+  unsigned char flagValue;
+  uint32_t tx_id;
+  
+
+  while (true) {
+    so.waitFlag(f_txCan, mask);
+    flagValue = so.readFlag(f_txCan);
+
+    switch (flagValue) {
+      case maskTempSend:
+        tx_id = TX_ID_TEMP;
+        so.clearFlag(f_txCan, maskTempSend);
+        break;
+      case maskSmokeSend:
+        
+        so.clearFlag(f_txCan, maskSmokeSend);
+        break;
+    }
+    
+    if (CAN.checkPendingTransmission() != CAN_TXPENDING) {
+      CAN.sendMsgBufNonBlocking(TX_ID_TEMP, CAN_EXTID, sizeof(int), (INT8U *) value);
+    }
+  }
+}
+
 /*****************************
   Temperature-realted tasks
 *****************************/
@@ -63,7 +130,7 @@ void taskSimTemp() {
   uint16_t tOven = 0;
   float mappedSlope;
 
-  while (1) {
+  while (true) {
     so.waitFlag(f_adc, maskAdcEvent);
     so.clearFlag(f_adc, maskAdcEvent);
 
@@ -102,7 +169,7 @@ void taskSensorTemp() {
   uint16_t tOven;
   uint16_t *tOvenMessage;
 
-  while (1) {
+  while (true) {
     so.waitMBox(mb_tOven, (byte**) &tOvenMessage);
 
 
@@ -127,7 +194,7 @@ void taskControlTemp() {
 
   nextActivationTick = so.getTick();
 
-  while (1) {
+  while (true) {
     so.waitSem(s_tempOven);
     tOven = sampledTempOven;
     so.signalSem(s_tempOven);
@@ -135,7 +202,7 @@ void taskControlTemp() {
     // Esto es un if de prueba, pero la temperatura
     // de referencia vendrá dada por la consigna
     so.waitSem(s_tGrill);
-    Serial.print("Control ve grill: "); Serial.println(tGrill);
+    //Serial.print("Control ve grill: "); Serial.println(tGrill);
     if (tOven >= 50 && s_tGrill != TGRILL_OFF) {
       //Serial.println("Control apaga grill");
       so.setFlag(f_temp, maskGrillOff);
@@ -146,7 +213,7 @@ void taskControlTemp() {
     so.signalSem(s_tGrill);
 
     Serial.print("Temperatura horno desde control: "); Serial.println(tOven); // DEBUG
-    Serial.flush(); // DEBUG
+    //Serial.flush(); // DEBUG
     hib.ledToggle(3); // DEBUG
 
     nextActivationTick = nextActivationTick + PERIOD_CONTROL_TEMP_TASK;
@@ -159,18 +226,18 @@ void taskGrill() {
   unsigned char mask = (maskGrillOff | maskGrillOn);
   unsigned char flagValue;
 
-  while (1) {
+  while (true) {
     so.waitFlag(f_temp, mask);
     flagValue = so.readFlag(f_temp);
     so.clearFlag(f_temp, mask);
 
     so.waitSem(s_tGrill);
-    Serial.print("Grill se ve: "); Serial.println(tGrill);
+    //Serial.print("Grill se ve: "); Serial.println(tGrill);
     if (flagValue == maskGrillOff && tGrill != TGRILL_OFF) {
-      Serial.println("Grill se apaga"); // DEBUG
+      //Serial.println("Grill se apaga"); // DEBUG
       tGrill = TGRILL_OFF;
     } else if (flagValue == maskGrillOn && tGrill != TGRILL_ON) {
-      Serial.println("Grill se enciende"); // DEBUG
+      //Serial.println("Grill se enciende"); // DEBUG
       tGrill = TGRILL_ON;
     }
     so.signalSem(s_tGrill);
@@ -202,14 +269,28 @@ void setup() {
   Serial.begin(115200);
   hib.begin();
   so.begin();
+
+  while (CAN.begin(CAN_500KBPS, MODE_LOOPBACK, true, false) != CAN_OK) {
+    Serial.println("CAN BUS shield initiating");
+    delay(100);
+  }
+
+  Serial.println("CAN BUS initiated");
+
+  attachInterrupt(0, ISR_CAN, FALLING);
 }
 
 void loop() {
   s_tempOven = so.defSem(1);
+  s_goalTemp = so.defSem(1);
   s_tGrill = so.defSem(1);
+
   mb_tOven = so.defMBox();
+  mb_tempDataToSend = so.defMBox();
+
   f_adc = so.defFlag();
   f_temp = so.defFlag();
+  f_txCan = so.defFlag();
 
   hib.setUpTimer5(TIMER_TICKS_FOR_125ms, TIMER_PSCALER_FOR_125ms, timer5Hook);
   hib.adcSetTimerDriven(TIMER_TICKS_FOR_500ms, TIMER_PSCALER_FOR_500ms, adcHook);
