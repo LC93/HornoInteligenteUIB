@@ -1,3 +1,5 @@
+#define  DEBUG_SERIAL 1
+
 #ifdef  DEBUG_SERIAL
 #define SERIAL_PRINT(X)     Serial.print(X);  Serial.flush();
 #define SERIAL_PRINTLN(X)   Serial.println(X); Serial.flush();

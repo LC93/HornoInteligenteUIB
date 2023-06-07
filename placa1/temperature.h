@@ -7,5 +7,3 @@
 #define TGRILL_ON   250
 
 #define NO_TEMP_GOAL -1
-
-#define TX_ID_TEMP 0x00

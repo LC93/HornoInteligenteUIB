@@ -6,15 +6,15 @@
 #include <SO.h>
 #include <timerConfig.h>
 
-// -------- Nuestras --------
 #include "temperature.h"
-
-// ----------- DEBUG ---------------
-#define  DEBUG_SERIAL 1
+// A falta de mejor solución, hay que copiar
+// el path completo al header porque Arduino no
+// soporta includes relativos
+#include "C:\\Users\\mirp2\\Documents\\Arduino\\encastats\\practica-final\\canIdentifiers.h"
 #include "serialDebug.h"
-// ---------------------------------
 
 #define PERIOD_CONTROL_TEMP_TASK 4;
+#define PERIOD_LOOPBACK_CAN_TASK 10; // Para probar can
 
 HIB hib;
 SO so;
@@ -94,37 +94,88 @@ void timer5Hook() {
   so.updateTime();
 }
 
+void taskLoopbackCan() {
+  unsigned long nextActivationTick; // Para probar con tx
+  uint16_t tOven = 100; // Para probar con tx
+
+  nextActivationTick = so.getTick(); // Para probar con tx
+
+  while (true) {
+    so.signalMBox(mb_tempDataToSend, (byte *) &tOven); // Para probar con tx
+    so.setFlag(f_txCan, maskTempSend); // Para probar con tx
+
+    // SERIAL_PRINTLN2("Enviando ", tOven);
+    tOven++; // Para probar con tx
+
+    nextActivationTick = nextActivationTick + PERIOD_LOOPBACK_CAN_TASK; // Para probar con tx
+    so.delayUntilTick(nextActivationTick); // Para probar con tx
+  }
+}
+
 /************************
   CAN tasks
 *************************/
 void taskRxCan() {
-  
+  uint32_t rx_id;
+  int rx_msg;
+
+  while (true) {
+    so.waitFlag(f_rxCan, maskCan);
+    so.clearFlag(f_rxCan, maskCan);
+
+    hib.ledToggle(0); // DEBUG
+    CAN.readRxMsg();
+
+    rx_id = CAN.getRxMsgId();
+    CAN.getRxMsgData((byte*) &rx_msg);
+
+    switch (rx_id) {
+      case TEMP_GOAL_IDENTIFIER:
+        so.waitSem(s_goalTemp);
+        goalTemp = rx_msg;
+        so.signalSem(s_goalTemp);
+        SERIAL_PRINTLN2("RX: ", rx_msg);
+        break;
+      case SMOKE_GOAL_IDENTIFIER:
+        // TODO: caso smoke
+        break;
+      default:
+        // No sé si es necesario un default
+        break;
+    }
+  }
 }
 
 void taskTxCan() {
-  int8_t value = 10;
   unsigned char mask = (maskTempSend | maskSmokeSend);
   unsigned char flagValue;
+
   uint32_t tx_id;
-  
+  uint16_t *valueMsg;
+  uint16_t value;
 
   while (true) {
     so.waitFlag(f_txCan, mask);
     flagValue = so.readFlag(f_txCan);
 
+    hib.ledToggle(1); // DEBUG
+
     switch (flagValue) {
       case maskTempSend:
-        tx_id = TX_ID_TEMP;
         so.clearFlag(f_txCan, maskTempSend);
+        // tx_id = TX_ID_TEMP;
+        tx_id = TEMP_GOAL_IDENTIFIER; // Para pruebas con Rx con CAN loopback
+        so.waitMBox(mb_tempDataToSend, (byte**) &valueMsg);
+        value = *valueMsg;
         break;
       case maskSmokeSend:
-        
         so.clearFlag(f_txCan, maskSmokeSend);
+        // TODO: Same para el humo
         break;
     }
-    
+
     if (CAN.checkPendingTransmission() != CAN_TXPENDING) {
-      CAN.sendMsgBufNonBlocking(TX_ID_TEMP, CAN_EXTID, sizeof(int), (INT8U *) value);
+      CAN.sendMsgBufNonBlocking(tx_id, CAN_EXTID, sizeof(int), (INT8U *) &value);
     }
   }
 }
@@ -166,7 +217,7 @@ void taskSimTemp() {
     //Serial.print("  Temperatura horno simulada: "); Serial.println(tOven); // DEBUG
 
     so.signalMBox(mb_tOven, (byte *) &tOven);
-    hib.ledToggle(1); // DEBUG
+    // hib.ledToggle(1); // DEBUG
 
   }
 }
@@ -189,7 +240,7 @@ void taskSensorTemp() {
 
     so.signalSem(s_tempOven);
 
-    hib.ledToggle(2); // DEBUG
+    // hib.ledToggle(2); // DEBUG
   }
 }
 
@@ -221,7 +272,7 @@ void taskControlTemp() {
     so.signalSem(s_tGrill);
 
     SERIAL_PRINTLN2("Temperatura horno desde control: ", tOven); // DEBUG
-    hib.ledToggle(3); // DEBUG
+    // hib.ledToggle(3); // DEBUG
 
     nextActivationTick = nextActivationTick + PERIOD_CONTROL_TEMP_TASK;
     so.delayUntilTick(nextActivationTick);
@@ -250,7 +301,7 @@ void taskGrill() {
     }
     so.signalSem(s_tGrill);
 
-    hib.ledToggle(4); // DEBUG
+    // hib.ledToggle(4); // DEBUG
   }
 }
 
@@ -278,6 +329,7 @@ void setup() {
   hib.begin();
   so.begin();
 
+  // while (CAN.begin(CAN_500KBPS, MODE_NORMAL, true, false) != CAN_OK) {
   while (CAN.begin(CAN_500KBPS, MODE_LOOPBACK, true, false) != CAN_OK) {
     Serial.println("CAN BUS shield initiating");
     delay(100);
@@ -299,14 +351,18 @@ void loop() {
   f_adc = so.defFlag();
   f_temp = so.defFlag();
   f_txCan = so.defFlag();
+  f_rxCan = so.defFlag();
 
   hib.setUpTimer5(TIMER_TICKS_FOR_125ms, TIMER_PSCALER_FOR_125ms, timer5Hook);
   hib.adcSetTimerDriven(TIMER_TICKS_FOR_500ms, TIMER_PSCALER_FOR_500ms, adcHook);
 
-  so.defTask(taskControlTemp, 1);
-  so.defTask(taskSimTemp, 2);
-  so.defTask(taskSensorTemp, 3);
-  so.defTask(taskGrill, 4);
+  // so.defTask(taskControlTemp, 1);
+  // so.defTask(taskSimTemp, 2);
+  // so.defTask(taskSensorTemp, 3);
+  // so.defTask(taskGrill, 4);
+  so.defTask(taskLoopbackCan, 1);
+  so.defTask(taskRxCan, 3);
+  so.defTask(taskTxCan, 2);
 
   so.enterMultiTaskingEnvironment();
 }
