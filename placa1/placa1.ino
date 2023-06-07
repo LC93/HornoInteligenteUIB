@@ -6,9 +6,15 @@
 #include <SO.h>
 #include <timerConfig.h>
 
+// -------- Nuestras --------
 #include "temperature.h"
 
-#define PERIOD_CONTROL_TEMP_TASK 1;
+// ----------- DEBUG ---------------
+#define  DEBUG_SERIAL 1
+#include "serialDebug.h"
+// ---------------------------------
+
+#define PERIOD_CONTROL_TEMP_TASK 4;
 
 HIB hib;
 SO so;
@@ -131,6 +137,7 @@ void taskSimTemp() {
   float mappedSlope;
 
   while (true) {
+    SERIAL_PRINTLN("taskSimTemp()");
     so.waitFlag(f_adc, maskAdcEvent);
     so.clearFlag(f_adc, maskAdcEvent);
 
@@ -157,7 +164,6 @@ void taskSimTemp() {
     //Serial.print("mapped Slope: "); Serial.println(mappedSlope);
     //Serial.print("tGrill: "); Serial.println(tGrill);
     //Serial.print("  Temperatura horno simulada: "); Serial.println(tOven); // DEBUG
-    //Serial.flush(); //DEBUG
 
     so.signalMBox(mb_tOven, (byte *) &tOven);
     hib.ledToggle(1); // DEBUG
@@ -170,13 +176,12 @@ void taskSensorTemp() {
   uint16_t *tOvenMessage;
 
   while (true) {
+    SERIAL_PRINTLN("taskSensorTemp()");
     so.waitMBox(mb_tOven, (byte**) &tOvenMessage);
-
 
     tOven = *tOvenMessage;
 
     //Serial.print("Temperatura horno en sensor: "); Serial.println(tOven); // DEBUG
-    //Serial.flush(); // DEBUG
 
     so.waitSem(s_tempOven);
 
@@ -195,6 +200,7 @@ void taskControlTemp() {
   nextActivationTick = so.getTick();
 
   while (true) {
+    SERIAL_PRINTLN("taskControlTemp()");
     so.waitSem(s_tempOven);
     tOven = sampledTempOven;
     so.signalSem(s_tempOven);
@@ -203,6 +209,7 @@ void taskControlTemp() {
     // de referencia vendrá dada por la consigna
     so.waitSem(s_tGrill);
     //Serial.print("Control ve grill: "); Serial.println(tGrill);
+    SERIAL_PRINTLN2("Control ve grill: ", tGrill);
     if (tOven >= 50 && s_tGrill != TGRILL_OFF) {
       //Serial.println("Control apaga grill");
       so.setFlag(f_temp, maskGrillOff);
@@ -210,10 +217,10 @@ void taskControlTemp() {
       //Serial.println("Control enciende grill");
       so.setFlag(f_temp, maskGrillOn);
     }
+
     so.signalSem(s_tGrill);
 
-    Serial.print("Temperatura horno desde control: "); Serial.println(tOven); // DEBUG
-    //Serial.flush(); // DEBUG
+    SERIAL_PRINTLN2("Temperatura horno desde control: ", tOven); // DEBUG
     hib.ledToggle(3); // DEBUG
 
     nextActivationTick = nextActivationTick + PERIOD_CONTROL_TEMP_TASK;
@@ -227,17 +234,18 @@ void taskGrill() {
   unsigned char flagValue;
 
   while (true) {
+    SERIAL_PRINTLN("taskGrill()");
     so.waitFlag(f_temp, mask);
     flagValue = so.readFlag(f_temp);
     so.clearFlag(f_temp, mask);
 
     so.waitSem(s_tGrill);
-    //Serial.print("Grill se ve: "); Serial.println(tGrill);
+    SERIAL_PRINTLN2("Grill se ve: ", tGrill);
     if (flagValue == maskGrillOff && tGrill != TGRILL_OFF) {
-      //Serial.println("Grill se apaga"); // DEBUG
+      SERIAL_PRINTLN("Grill se apaga"); // DEBUG
       tGrill = TGRILL_OFF;
     } else if (flagValue == maskGrillOn && tGrill != TGRILL_ON) {
-      //Serial.println("Grill se enciende"); // DEBUG
+      SERIAL_PRINTLN("Grill se enciende"); // DEBUG
       tGrill = TGRILL_ON;
     }
     so.signalSem(s_tGrill);
