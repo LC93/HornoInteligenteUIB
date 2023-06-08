@@ -1,0 +1,53 @@
+- Pollo al horno
+	- Tiempo total: 60 segundos
+	- Fase 1: alcanzar 200 grados
+	- Fase 2: 
+		- Temp. objetivo: 200
+		- Tiempo total: 50 segundos
+	- Fase 3: esperar a alcanzar 150 grados
+	- Fase 4:
+		- Temp. objetivo: 150
+		- Tiempo total: 10 segundos
+	- Fase 5: que pite y muestre por los LEDs que ha acabado
+		de cocinarse
+- Pizza
+	- Tiempo total: 20 segundos
+	- Fase 1: alcanzar 220 grados
+	- Fase 2: 
+		- Temp. objetivo: 220
+		- Tiempo total: 20 segundos
+	- Fase 5: que pite y muestre por los LEDs que ha acabado
+		de cocinarse
+
+- Lasaña
+	- Tiempo total: 28 segundos
+	- Fase 1: alcanzar 180 grados
+	- Fase 2: 
+		- Temp. objetivo: 180
+		- Tiempo total: 20 segundos
+	- Fase 3: esperar a alcanzar 225 grados
+	- Fase 4:
+		- Temp. objetivo: 200
+		- Tiempo total: 8 segundos
+	- Fase 5: que pite y muestre por los LEDs que ha acabado
+		de cocinarse
+
+- Bizcocho
+	- Tiempo total: 40 segundos
+	- Fase 1: alcanzar 150 grados
+	- Fase 2: 
+		- Temp. objetivo: 170
+		- Tiempo total: 10 segundos
+	- Fase 3: esperar a alcanzar 220 grados
+	- Fase 4:
+		- Temp. objetivo: 220
+		- Tiempo total: 20 segundos
+	- Fase 5: esperar a alcanzar 200 grados
+	- Fase 6:
+		- Temp. objetivo: 150
+		- Tiempo total: 10 segundos
+	- Fase 7: que pite y muestre por los LEDs que ha acabado
+		de cocinarse
+
+
+
