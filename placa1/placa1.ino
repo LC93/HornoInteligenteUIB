@@ -36,7 +36,7 @@ MBox mb_tOven;
 MBox mb_tempDataToSend;
 
 /***************************
-  Declaration of mailboxes
+  Declaration of flags
 ***************************/
 // Flag and mask for ADCHook to awake taskSimTemp
 Flag f_adc;
