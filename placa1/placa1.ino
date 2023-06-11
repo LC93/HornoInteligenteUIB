@@ -147,8 +147,6 @@ void taskRxCan() {
         so.waitSem(s_goalTemp);
         goalTemp = NO_TEMP_GOAL;
         so.signalSem(s_goalTemp);
-      default:
-        // No sé si es necesario un default
         break;
     }
   }
@@ -287,7 +285,7 @@ void taskControlTemp() {
       } else if (sampledTempOven < maxHysteresis
                  && sampledTempOven > minHysteresis
                  && !reachedGoalTemp) {
-        SERIAL_PRINTLN("Goal temp reached!");
+        //SERIAL_PRINTLN("Goal temp reached!");
         reachedGoalTemp = true;
         dataToSend->id = GOAL_TEMPERATURE_REACHED_IDENTIFIER;
         so.setFlag(f_txCan, maskTempSend);
@@ -299,7 +297,7 @@ void taskControlTemp() {
     } else {
       so.waitSem(s_tGrill);
       // Si no hay consigna, hay que asegurarse de
-      // que el grill queda apagado
+      // que el grill quede apagado
       if (tGrill == TGRILL_ON)
         so.setFlag(f_temp, maskGrillOff);
       so.signalSem(s_tGrill);
@@ -310,7 +308,6 @@ void taskControlTemp() {
     nextActivationTick = nextActivationTick + PERIOD_CONTROL_TEMP_TASK;
     so.delayUntilTick(nextActivationTick);
   }
-
 }
 
 void taskGrill() {

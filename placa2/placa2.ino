@@ -1,3 +1,5 @@
+#include <math.h>
+
 #include <mcp_can_uib.h>
 #include <mcp_can_uib_dfs.h>
 #include <SPI.h>
@@ -25,6 +27,9 @@
 #define KEY_STAR 9
 #define KEY_0 10
 #define KEY_HASHTAG 11
+
+#define OCTAVE 7
+#define SOL 8
 
 struct LcdInfo {
   uint8_t line;
@@ -55,6 +60,10 @@ MBox mb_state;
 ***************************/
 Flag f_keypad;
 const unsigned char maskKeypad = 0x01;
+
+Flag f_alarm;
+const unsigned char maskFoodDone = 0x01;
+const unsigned char maskFire = 0x02;
 
 /**********************************
   Declaration of global variables
@@ -128,25 +137,63 @@ void taskControl() {
         }
       }
     }
+    so.signalSem(s_keypad);
+
+    so.signalMBox(mb_recipe, (byte*) &selectedRecipe);
+    nextActivationTick = nextActivationTick + PERIOD_CONTROL_TASK;
+    so.delayUntilTick(nextActivationTick);
   }
-  so.signalSem(s_keypad);
 }
 
-so.signalMBox(mb_recipe, (byte*) &selectedRecipe);
-nextActivationTick = nextActivationTick + PERIOD_CONTROL_TASK;
-so.delayUntilTick(nextActivationTick);
-}
+
 
 void taskLog() {
 
 }
 
 void taskBuzzer() {
+  unsigned char mask = (maskFoodDone | maskFire);
+  unsigned char flagValue;
+  uint8_t foodDoneSoundTimes = 5;
+  uint8_t fireSoundTimes = 20;
+  uint8_t ticksPerSound = 3;
 
+  while (true) {
+    so.waitFlag(f_alarm, mask);
+    flagValue = so.readFlag(f_alarm);
+    so.clearFlag(f_alarm, mask);
+
+    if (flagValue == maskFoodDone) {
+      for (uint8_t i = 0; i < foodDoneSoundTimes; i++) {
+        playNote(SOL, OCTAVE, 500);
+        delay(500);
+      }
+    } else if (flagValue == maskFire) {
+      for (uint8_t i = 0; i < fireSoundTimes; i++) {
+        for (uint8_t j = 0; j < ticksPerSound; j++) {
+          playNote(SOL, OCTAVE, 100);
+          delay(100);
+        }
+        delay(200);
+      }
+    }
+  }
 }
 
 void taskLed() {
+  unsigned char mask = (maskFoodDone | maskFire);
+  unsigned char flagValue;
 
+  while (true) {
+    so.waitFlag(f_alarm, mask);
+    flagValue = so.readFlag(f_alarm);
+
+    if (flagValue == maskFoodDone) {
+
+    } else if (flagValue == maskFire) {
+
+    }
+  }
 }
 
 void taskLcd() {
@@ -187,6 +234,16 @@ void task7Seg() {
   }
 }
 
+/*****************
+  Auxiliar functions
+*****************/
+void playNote(uint8_t note, uint8_t octave, uint16_t duration) {
+  float calc = (((float) note) - 10.0) / 12.0 + ((float) octave) - 4.0;
+  float frec = 440.0 * pow(2.0, calc);
+
+  hib.buzzPlay(duration, frec);
+}
+
 void setup() {
   Serial.begin(115200);
   hib.begin();
@@ -209,14 +266,17 @@ void loop() {
   mb_recipe = so.defMBox();
 
   f_keypad = so.defFlag();
+  f_alarm = so.defFlag();
 
   hib.setUpTimer5(TIMER_TICKS_FOR_125ms, TIMER_PSCALER_FOR_125ms, timer5Hook);
   hib.keySetIntDriven(100, keypadHook);
 
-  so.defTask(taskControl, 1);
-  so.defTask(taskKeypad, 2);
-  so.defTask(task7Seg, 3);
-  so.defTask(taskLcd, 4);
+  //so.defTask(taskControl, 1);
+  so.defTask(taskBuzzer, 2);
+  so.defTask(taskLed, 3);
+  //so.defTask(taskKeypad, 4);
+  //so.defTask(task7Seg, 5);
+  //so.defTask(taskLcd, 6);
 
   so.enterMultiTaskingEnvironment();
 }
