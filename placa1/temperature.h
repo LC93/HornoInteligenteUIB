@@ -7,3 +7,7 @@
 #define TGRILL_ON   250
 
 #define NO_TEMP_GOAL -1
+
+#define HYSTERESIS_PERCENTAGE 0.05
+
+ 
