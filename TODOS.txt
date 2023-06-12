@@ -1,0 +1,4 @@
+- Añadir variable "fire" y mutex "s_fire" al diseño
+en la parte de RxCan de la placa 2
+- Mirar por qué las tareas de Buzzer y Led no se
+ejecutan concurrentemente
