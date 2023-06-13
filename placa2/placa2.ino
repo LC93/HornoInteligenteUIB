@@ -71,10 +71,8 @@ Flag f_keypad;
 const unsigned char maskKeypad = 0x01;
 
 Flag f_alarm;
-const unsigned char maskFoodDoneBuzzer = 0x01;
-const unsigned char maskFoodDoneLed = 0x02;
-const unsigned char maskFireBuzzer = 0x04;
-const unsigned char maskFireLed = 0x08;
+const unsigned char maskFoodDone = 0x01;
+const unsigned char maskFire = 0x02;
 
 Flag f_rxCan;
 const unsigned char maskCan = 0x01;
@@ -88,7 +86,7 @@ volatile bool isKeyNew = false;
 //const String recipeString[] = {
 //  "Pollo al horno", "Pizza", "Lasaña", "Bizcocho"
 //};
-volatile bool fire = true;
+volatile bool fire = false;
 
 
 void ISR_CAN() {
@@ -173,6 +171,7 @@ void taskControl() {
   uint8_t lastPressedKey = hib.NO_KEY;
   struct LcdInfo info;
   struct TxData* dataToSend = (TxData*) malloc(sizeof(TxData));
+  //unsigned char fireMask = (maskFireBuzzer | maskFireLed);
 
   nextActivationTick = so.getTick();
   while (true) {
@@ -200,8 +199,9 @@ void taskControl() {
       if (fire) {
         dataToSend->id = STOP_COOKING_IDENTIFIER;
         so.signalMBox(mb_txCan, (byte*) dataToSend);
-        so.setFlag(f_alarm, maskFireLed);
-        so.setFlag(f_alarm, maskFireBuzzer);
+        so.setFlag(f_alarm, maskFire);
+        //so.setFlag(f_alarm, maskFireLed);
+        //so.setFlag(f_alarm, maskFireBuzzer);
       } else {
 
       }
@@ -217,64 +217,38 @@ void taskLog() {
 
 }
 
-void taskBuzzer() {
-  unsigned char mask = (maskFoodDoneBuzzer | maskFireBuzzer);
+void taskAlarm() {
+  unsigned char mask = (maskFoodDone | maskFire);
   unsigned char flagValue;
+  uint8_t foodDoneBlinks = 20;
   uint8_t foodDoneSoundTimes = 5;
-  uint8_t fireSoundTimes = 20;
   uint8_t ticksPerSound = 3;
 
   while (true) {
-
     so.waitFlag(f_alarm, mask);
-    hib.ledToggle(1);
-
     flagValue = so.readFlag(f_alarm);
-    Serial.println(flagValue);
+    so.clearFlag(f_alarm, mask);
 
-    if (flagValue == maskFoodDoneBuzzer) {
-      so.clearFlag(f_alarm, maskFoodDoneBuzzer);
+    if (flagValue == maskFoodDone) {
       for (uint8_t i = 0; i < foodDoneSoundTimes; i++) {
+        hib.ledToggle(3);
+        hib.ledToggle(4);
+        hib.ledToggle(5);
         playNote(SOL, OCTAVE, 500);
         delay(500);
       }
-    } else if (flagValue == maskFireBuzzer) {
-      so.clearFlag(f_alarm, maskFireBuzzer);
-      Serial.println("There is a fire");
-      for (uint8_t i = 0; i < fireSoundTimes; i++) {
+    } else if (flagValue == maskFire) {
+      for (int i = 0; i < foodDoneBlinks; i++) {
+        hib.ledToggle(3);
+        hib.ledToggle(4);
+        hib.ledToggle(5);
         for (uint8_t j = 0; j < ticksPerSound; j++) {
           playNote(SOL, OCTAVE, 100);
           delay(100);
         }
         delay(200);
       }
-      so.waitSem(s_fire);
-      fire = false; // DEBUG
-      so.signalSem(s_fire);
-    }
-  }
-}
-
-void taskLed() {
-  unsigned char mask = (maskFoodDoneLed | maskFireLed);
-  unsigned char flagValue;
-  uint8_t foodDoneBlinks = 20;
-
-  while (true) {
-    so.waitFlag(f_alarm, mask);
-    flagValue = so.readFlag(f_alarm);
-
-    if (flagValue == maskFoodDoneLed) {
-      so.clearFlag(f_alarm, maskFoodDoneLed);
-
-    } else if (flagValue == maskFireLed) {
-      so.clearFlag(f_alarm, maskFireLed);
-      for (int i = 0; i < foodDoneBlinks; i++) {
-        hib.ledToggle(3);
-        hib.ledToggle(4);
-        hib.ledToggle(5);
-        delay(200);
-      }
+      fire = false;
     }
   }
 }
@@ -358,8 +332,9 @@ void loop() {
   hib.keySetIntDriven(100, keypadHook);
 
   so.defTask(taskControl, 1);
-  so.defTask(taskLed, 2);
-  so.defTask(taskBuzzer, 2);
+  so.defTask(taskAlarm, 2);
+  //so.defTask(taskLed, 2);
+  //so.defTask(taskBuzzer, 2);
   //so.defTask(taskKeypad, 4);
   //so.defTask(task7Seg, 5);
   //so.defTask(taskLcd, 6);
