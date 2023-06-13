@@ -9,6 +9,7 @@
 #include <timerConfig.h>
 
 #include "C:\\Users\\mirp2\\Documents\\Arduino\\encastats\\practica-final\\canIdentifiers.h"
+#include "recipe.h"
 
 #define PERIOD_CONTROL_TASK 5
 
@@ -33,9 +34,17 @@
 #define OCTAVE 7
 #define SOL 8
 
+#define SYSTEM_STATE_TYPE_MSG 0
+#define RECIPE_TYPE_MSG 1
+
+struct SystemState {
+  uint16_t temperature;
+  uint16_t elapsedTime;
+};
+
 struct LcdInfo {
-  uint8_t line;
-  char* data;
+  uint8_t type;
+  SystemState* data;
 };
 
 struct TxData {
@@ -83,9 +92,6 @@ const unsigned char maskCan = 0x01;
 volatile uint8_t newKey;
 volatile uint8_t pressedKey = hib.NO_KEY;
 volatile bool isKeyNew = false;
-//const String recipeString[] = {
-//  "Pollo al horno", "Pizza", "Lasaña", "Bizcocho"
-//};
 volatile bool fire = false;
 
 
@@ -167,45 +173,54 @@ void taskKeypad() {
 void taskControl() {
   unsigned long nextActivationTick;
   int8_t selectedRecipe = 1;
-  uint8_t currentState = COOKING_STATE;
+  uint8_t currentState = IDLE_STATE;
   uint8_t lastPressedKey = hib.NO_KEY;
   struct LcdInfo info;
   struct TxData* dataToSend = (TxData*) malloc(sizeof(TxData));
-  //unsigned char fireMask = (maskFireBuzzer | maskFireLed);
+  bool finished = false;
 
   nextActivationTick = so.getTick();
+  so.signalMBox(mb_recipe, (byte*) &selectedRecipe);
+
   while (true) {
     hib.ledToggle(0); // DEBUG
     if (currentState == IDLE_STATE) {
       so.waitSem(s_keypad);
       if (isKeyNew) {
         isKeyNew = false;
-        // TODO: Hay un bug en el que si
-        // se alterna entre el 2 y el 8 va
-        // pegando botes por alguna razón
+
         if (pressedKey == KEY_2) {
           selectedRecipe = (selectedRecipe - 1) < 0 ?
                            NUMBER_OF_RECIPES - 1 :
                            (selectedRecipe - 1) % NUMBER_OF_RECIPES;
-          Serial.print("Recipe: "); Serial.println(selectedRecipe);
         } else if (pressedKey == KEY_8) {
           selectedRecipe = (selectedRecipe + 1) % NUMBER_OF_RECIPES;
-          Serial.print("Recipe: "); Serial.println(selectedRecipe);
+        } else if (pressedKey == KEY_5) {
+          currentState = COOKING_STATE;
         }
+        so.signalMBox(mb_recipe, (byte*) &selectedRecipe);
       }
-      so.waitSem(s_keypad);
+
+      so.signalSem(s_keypad);
     } else if (currentState == COOKING_STATE) {
       so.waitSem(s_fire);
+
       if (fire) {
+        so.signalSem(s_fire);
         dataToSend->id = STOP_COOKING_IDENTIFIER;
         so.signalMBox(mb_txCan, (byte*) dataToSend);
         so.setFlag(f_alarm, maskFire);
-        //so.setFlag(f_alarm, maskFireLed);
-        //so.setFlag(f_alarm, maskFireBuzzer);
+        // Por ahora, cuando haya fuego simplemente
+        // que se quede en estado idle otra vez y ya
+        currentState = IDLE_STATE;
+        fire = false;
       } else {
-
+        so.signalSem(s_fire);
+        if (finished) {
+          so.setFlag(f_alarm, maskFoodDone);
+          currentState = IDLE_STATE;
+        }
       }
-      so.signalSem(s_fire);
     }
 
     nextActivationTick = nextActivationTick + PERIOD_CONTROL_TASK;
@@ -248,34 +263,37 @@ void taskAlarm() {
         }
         delay(200);
       }
-      fire = false;
     }
   }
 }
 
 void taskLcd() {
+  struct LcdInfo* infoMsg;
   struct LcdInfo info;
   char buff[20];
+  //  const char recipeString[] = {
+  //    "Pollo al horno", "Pizza", "Lasaña", "Bizcocho"
+  //  };
 
   hib.lcdClear();
   hib.lcdPrint("Bienvenido/a!");
 
   while (true) {
-    so.waitMBox(mb_state, (byte**) &info);
+    so.waitMBox(mb_state, (byte**) &infoMsg);
+    info = *infoMsg;
     hib.lcdClear();
 
-    switch (info.line) {
-      case 1:
+    switch (info.type) {
+      case SYSTEM_STATE_TYPE_MSG:
+        // TODO
         hib.lcdMoveHome();
         break;
-      case 2:
-        hib.lcdSetCursorSecondLine();
+      case RECIPE_TYPE_MSG:
+        hib.lcdMoveHome();
         break;
     }
 
-    sprintf(buff, "%s", info.data);
-
-    hib.lcdPrint(buff);
+    //hib.lcdPrint(recipeString[);
   }
 }
 
@@ -315,6 +333,30 @@ void setup() {
   Serial.println("CAN BUS initiated");
 
   attachInterrupt(0, ISR_CAN, FALLING);
+
+  Phase chickenPhases[] = {
+    {200, 50},
+    {150, 10}
+  };
+  Recipe chicken("Pollo al horno", 2, chickenPhases);
+
+  Phase pizzaPhases[] = {
+    {220, 20}
+  };
+  Recipe pizza("Pizza", 1, pizzaPhases);
+
+  Phase lasagnaPhases[] = {
+    {180, 20},
+    {200, 8}
+  };
+  Recipe lasagna("Lasagna", 2, lasagnaPhases);
+
+  Phase cakePhases[] = {
+    {170, 10},
+    {220, 20},
+    {150, 10}
+  };
+  Recipe cake("Bizcocho", 3, cakePhases);
 }
 
 void loop() {
@@ -333,10 +375,8 @@ void loop() {
 
   so.defTask(taskControl, 1);
   so.defTask(taskAlarm, 2);
-  //so.defTask(taskLed, 2);
-  //so.defTask(taskBuzzer, 2);
-  //so.defTask(taskKeypad, 4);
-  //so.defTask(task7Seg, 5);
+  so.defTask(taskKeypad, 3);
+  so.defTask(task7Seg, 5);
   //so.defTask(taskLcd, 6);
 
   so.enterMultiTaskingEnvironment();
