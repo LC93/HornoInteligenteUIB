@@ -9,9 +9,9 @@ enum LcdInfoType {
 };
 
 typedef struct {
-  uint8_t type;
+  LcdInfoType type;
   char* recipe;
-  SystemState* state;
+  SystemState state;
 } LcdInfo;
 
 enum LogType {

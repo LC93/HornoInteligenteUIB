@@ -38,7 +38,7 @@
 
 typedef struct {
   uint32_t id;
-  uint16_t* data;
+  uint16_t data;
 } TxData;
 
 HIB hib;
@@ -54,6 +54,7 @@ MCP_CAN CAN(SPI_CS_PIN);
 Sem s_keypad;
 Sem s_fire;
 Sem s_currentTemp;
+Sem s_reachedGoalTemp;
 
 /***************************
   Declaration of mailboxes
@@ -85,6 +86,7 @@ volatile uint8_t newKey;
 volatile uint8_t pressedKey = hib.NO_KEY;
 volatile bool isKeyNew = false;
 volatile bool fire = false;
+volatile bool reachedGoalTemp = false;
 volatile uint16_t currentTemp = 0;
 
 Recipe* chicken;
@@ -124,6 +126,7 @@ void taskRxCan() {
     so.waitFlag(f_rxCan, maskCan);
     so.clearFlag(f_rxCan, maskCan);
 
+    hib.ledToggle(0);
     CAN.readRxMsg();
 
     rx_id = CAN.getRxMsgId();
@@ -141,6 +144,16 @@ void taskRxCan() {
         so.signalSem(s_currentTemp);
         break;
       case GOAL_TEMPERATURE_REACHED_IDENTIFIER:
+        so.waitSem(s_reachedGoalTemp);
+        reachedGoalTemp = true;
+        so.signalSem(s_reachedGoalTemp);
+        break;
+
+      // DEBUG
+      case TEMP_GOAL_IDENTIFIER:
+        so.waitSem(s_reachedGoalTemp);
+        reachedGoalTemp = true;
+        so.signalSem(s_reachedGoalTemp);
         break;
     }
   }
@@ -172,10 +185,15 @@ void taskKeypad() {
 
 void taskControl() {
   unsigned long nextActivationTick;
-  int8_t selectedRecipeIndex = 1;
+  unsigned long initialPhaseTime;
+  unsigned long currentPhaseTime = 0;
+  unsigned long elapsedTime;
+  int8_t selectedRecipeIndex = 0;
   uint8_t currentState = IDLE_STATE;
   uint8_t lastPressedKey = hib.NO_KEY;
-  bool finished = true;
+  bool finishedCooking = false;
+  bool inPhase = false;
+  bool finishedPhase = false;
   char buff[50];
   LogInfo logInfo;
   LcdInfo lcdInfo;
@@ -183,14 +201,24 @@ void taskControl() {
   TxData dataToSend;
   Recipe* recipes[] = { chicken, pizza, lasagna, cake };
   Recipe* selectedRecipe;
+  Phase* currentPhase;
+
+  so.signalMBox(mb_recipe, (byte*) &selectedRecipeIndex);
+
+  createLcdInfo(&lcdInfo,
+                LcdInfoType::RECIPE,
+                recipes[selectedRecipeIndex]->getName(),
+                0,
+                0);
+  so.signalMBox(mb_lcd, (byte*) &lcdInfo);
 
   nextActivationTick = so.getTick();
-  so.signalMBox(mb_recipe, (byte*) &selectedRecipeIndex);
+  so.signalMBox(mb_lcd, (byte*) &lcdInfo);
 
   while (true) {
     if (currentState == IDLE_STATE) {
       lcdInfo.type = LcdInfoType::RECIPE;
-      
+
       createLog(&logInfo, LogType::INFO, "Oven in idle state");
       so.signalMBox(mb_log, (byte*) &logInfo);
 
@@ -203,11 +231,19 @@ void taskControl() {
                                 NUMBER_OF_RECIPES - 1 :
                                 (selectedRecipeIndex - 1) % NUMBER_OF_RECIPES;
 
-          lcdInfo.recipe = recipes[selectedRecipeIndex]->getName();
+          createLcdInfo(&lcdInfo,
+                        LcdInfoType::RECIPE,
+                        recipes[selectedRecipeIndex]->getName(),
+                        0,
+                        0);
           so.signalMBox(mb_lcd, (byte*) &lcdInfo);
         } else if (pressedKey == KEY_8) {
           selectedRecipeIndex = (selectedRecipeIndex + 1) % NUMBER_OF_RECIPES;
-          lcdInfo.recipe = recipes[selectedRecipeIndex]->getName();
+          createLcdInfo(&lcdInfo,
+                        LcdInfoType::RECIPE,
+                        recipes[selectedRecipeIndex]->getName(),
+                        0,
+                        0);
           so.signalMBox(mb_lcd, (byte*) &lcdInfo);
         } else if (pressedKey == KEY_5) {
           currentState = COOKING_STATE;
@@ -223,9 +259,8 @@ void taskControl() {
 
       so.signalSem(s_keypad);
     } else if (currentState == COOKING_STATE) {
-      lcdInfo.type = LcdInfoType::SYSTEM_STATE;
-      
-      createLog(&logInfo, LogType::INFO, "Oven currently cooking");
+      sprintf(buff, "Oven currently cooking %s", selectedRecipe->getName());
+      createLog(&logInfo, LogType::INFO, buff);
       so.signalMBox(mb_log, (byte*) &logInfo);
 
       so.waitSem(s_fire);
@@ -243,15 +278,73 @@ void taskControl() {
         // que se quede en estado idle otra vez y ya
         currentState = IDLE_STATE;
         fire = false;
+      } else if (finishedCooking) {
+        so.signalSem(s_fire);
+        currentState = IDLE_STATE;
+
+        createLog(&logInfo, LogType::INFO, "Recipe finished!");
+        so.signalMBox(mb_log, (byte*) &logInfo);
+
+        so.setFlag(f_alarm, maskFoodDone);
       } else {
         so.signalSem(s_fire);
-        if (finished) {
-          currentState = IDLE_STATE;
 
-          createLog(&logInfo, LogType::INFO, "Recipe finished!");
+        so.waitSem(s_currentTemp);
+        sprintf(buff, "Current temperature: %d", currentTemp);
+        so.signalSem(s_currentTemp);
+
+        createLog(&logInfo, LogType::INFO, buff);
+        so.signalMBox(mb_log, (byte*) &logInfo);
+
+        if (selectedRecipe->finishedPhases() && finishedPhase) {
+          finishedCooking = true;
+          createCanMsg(&dataToSend, STOP_COOKING_IDENTIFIER, 0);
+          so.signalMBox(mb_txCan, (byte*) &dataToSend);
+
+          createLog(&logInfo, LogType::INFO, "Finished");
           so.signalMBox(mb_log, (byte*) &logInfo);
+        } else if (!selectedRecipe->finishedPhases() && finishedPhase) {
+          finishedPhase = false;
+          selectedRecipe->nextPhase();
+          inPhase = false;
 
-          so.setFlag(f_alarm, maskFoodDone);
+          createLog(&logInfo, LogType::INFO, "Finished phase, but not recipe yet");
+          so.signalMBox(mb_log, (byte*) &logInfo);
+        } else if (!inPhase) {
+          currentPhase = selectedRecipe->getPhase();
+          inPhase = true;
+
+          createCanMsg(&dataToSend, TEMP_GOAL_IDENTIFIER, 0);
+          so.signalMBox(mb_txCan, (byte*) &dataToSend);
+
+          createLog(&logInfo, LogType::INFO, "Not into phase, sending temperature goal");
+          so.signalMBox(mb_log, (byte*) &logInfo);
+        } else {
+          so.waitSem(s_reachedGoalTemp);
+          if (reachedGoalTemp && elapsedTime >= currentPhase->totalTime) {
+            currentPhaseTime = 0;
+            finishedPhase = true;
+
+            createLog(&logInfo, LogType::INFO, "Finished phase");
+            so.signalMBox(mb_log, (byte*) &logInfo);
+          } else if (reachedGoalTemp && currentPhaseTime == 0) {
+            initialPhaseTime = millis();
+            currentPhaseTime = millis();
+            elapsedTime = (currentPhaseTime - initialPhaseTime) / 1000;
+
+            createLog(&logInfo, LogType::INFO, "Initializing phase");
+            so.signalMBox(mb_log, (byte*) &logInfo);
+          } else if (reachedGoalTemp &&
+                     currentPhaseTime != 0 &&
+                     elapsedTime < currentPhase->totalTime) {
+            currentPhaseTime = millis();
+            elapsedTime = (currentPhaseTime - initialPhaseTime) / 1000;
+
+            sprintf(buff, "Elapsed time: %d", elapsedTime);
+            createLog(&logInfo, LogType::INFO, buff);
+            so.signalMBox(mb_log, (byte*) &logInfo);
+          }
+          so.signalSem(s_reachedGoalTemp);
         }
       }
     }
@@ -341,22 +434,24 @@ void taskLcd() {
     so.waitMBox(mb_lcd, (byte**) &infoMsg);
     info = *infoMsg;
     hib.lcdClear();
-    hib.ledToggle(0);
 
     switch (info.type) {
       case LcdInfoType::SYSTEM_STATE:
         sprintf(buff,
-                "Temp: %d, time: %d",
-                info.state->temperature,
-                info.state->elapsedTime);
+                "Temp: %d",
+                info.state.temperature);
+        hib.lcdPrint(buff);
+        hib.lcdMoveHome();
+        hib.lcdSetCursorSecondLine();
+        sprintf(buff,
+                "Time: %d",
+                info.state.elapsedTime);
         hib.lcdPrint(buff);
         break;
       case LcdInfoType::RECIPE:
         hib.lcdPrint(info.recipe);
         break;
     }
-
-    //hib.lcdPrint(recipeString[);
   }
 }
 
@@ -382,11 +477,27 @@ void playNote(uint8_t note, uint8_t octave, uint16_t duration) {
   hib.buzzPlay(duration, frec);
 }
 
-void createLog(LogInfo* info, LogType type, const char* msg) {
+void createLog(LogInfo* info, const LogType type, const char* msg) {
   char buff[50];
   info->type = type;
   sprintf(buff, "%s", msg);
   info->msg = buff;
+}
+
+void createCanMsg(TxData* data, const uint32_t id, const uint16_t msg) {
+  data->id = id;
+  data->data = msg;
+}
+
+void createLcdInfo(LcdInfo* info,
+                   LcdInfoType type,
+                   char* recipe,
+                   uint16_t temperature,
+                   uint16_t elapsedTime) {
+  info->type = type;
+  info->recipe = recipe;
+  info->state.temperature = temperature;
+  info->state.elapsedTime = elapsedTime;
 }
 
 void setup() {
@@ -434,6 +545,7 @@ void loop() {
   s_keypad = so.defSem(1);
   s_fire = so.defSem(1);
   s_currentTemp = so.defSem(1);
+  s_reachedGoalTemp = so.defSem(1);
 
   mb_lcd = so.defMBox();
   mb_recipe = so.defMBox();
@@ -449,10 +561,12 @@ void loop() {
 
   so.defTask(taskControl, 1);
   so.defTask(taskAlarm, 2);
-  so.defTask(taskKeypad, 3);
-  so.defTask(taskLog, 4);
-  so.defTask(taskLcd, 5);
-  so.defTask(task7Seg, 6);
+  so.defTask(taskRxCan, 3);
+  so.defTask(taskTxCan, 3);
+  so.defTask(taskKeypad, 4);
+  so.defTask(taskLog, 5);
+  so.defTask(taskLcd, 6);
+  so.defTask(task7Seg, 7);
 
   so.enterMultiTaskingEnvironment();
 }

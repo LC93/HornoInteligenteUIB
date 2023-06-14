@@ -1,7 +1,7 @@
 #include <Arduino.h>
 
 typedef struct {
-    uint8_t time;
+    uint8_t totalTime;
     uint16_t temperature;
 } Phase;
 
