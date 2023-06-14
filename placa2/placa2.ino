@@ -11,6 +11,7 @@
 
 #include "C:\\Users\\mirp2\\Documents\\Arduino\\encastats\\practica-final\\canIdentifiers.h"
 #include "recipe.h"
+#include "lcd_and_logging.h"
 
 #define PERIOD_CONTROL_TASK 5
 
@@ -34,29 +35,6 @@
 
 #define OCTAVE 7
 #define SOL 8
-
-#define SYSTEM_STATE_TYPE_MSG 0
-#define RECIPE_TYPE_MSG 1
-
-typedef struct {
-  uint16_t temperature;
-  uint16_t elapsedTime;
-} SystemState;
-
-typedef struct {
-  uint8_t type;
-  SystemState* data;
-} LcdInfo;
-
-enum LogType {
-  FAILURE,
-  INFO
-};
-
-typedef struct {
-  LogType type;
-  char* msg;
-} LogInfo;
 
 typedef struct {
   uint32_t id;
@@ -83,7 +61,7 @@ Sem s_currentTemp;
 MBox mb_recipe;
 // Yo le cambiaría el nombre a este
 // MBox
-MBox mb_state;
+MBox mb_lcd;
 MBox mb_txCan;
 MBox mb_log;
 
@@ -194,43 +172,72 @@ void taskKeypad() {
 
 void taskControl() {
   unsigned long nextActivationTick;
-  int8_t selectedRecipe = 1;
+  int8_t selectedRecipeIndex = 1;
   uint8_t currentState = IDLE_STATE;
   uint8_t lastPressedKey = hib.NO_KEY;
-  LcdInfo info;
-  TxData* dataToSend = (TxData*) malloc(sizeof(TxData));
-  bool finished = false;
+  bool finished = true;
+  char buff[50];
+  LogInfo logInfo;
+  LcdInfo lcdInfo;
+  SystemState state;
+  TxData dataToSend;
+  Recipe* recipes[] = { chicken, pizza, lasagna, cake };
+  Recipe* selectedRecipe;
 
   nextActivationTick = so.getTick();
-  so.signalMBox(mb_recipe, (byte*) &selectedRecipe);
+  so.signalMBox(mb_recipe, (byte*) &selectedRecipeIndex);
 
   while (true) {
-    hib.ledToggle(0); // DEBUG
     if (currentState == IDLE_STATE) {
+      lcdInfo.type = LcdInfoType::RECIPE;
+      
+      createLog(&logInfo, LogType::INFO, "Oven in idle state");
+      so.signalMBox(mb_log, (byte*) &logInfo);
+
       so.waitSem(s_keypad);
       if (isKeyNew) {
         isKeyNew = false;
 
         if (pressedKey == KEY_2) {
-          selectedRecipe = (selectedRecipe - 1) < 0 ?
-                           NUMBER_OF_RECIPES - 1 :
-                           (selectedRecipe - 1) % NUMBER_OF_RECIPES;
+          selectedRecipeIndex = (selectedRecipeIndex - 1) < 0 ?
+                                NUMBER_OF_RECIPES - 1 :
+                                (selectedRecipeIndex - 1) % NUMBER_OF_RECIPES;
+
+          lcdInfo.recipe = recipes[selectedRecipeIndex]->getName();
+          so.signalMBox(mb_lcd, (byte*) &lcdInfo);
         } else if (pressedKey == KEY_8) {
-          selectedRecipe = (selectedRecipe + 1) % NUMBER_OF_RECIPES;
+          selectedRecipeIndex = (selectedRecipeIndex + 1) % NUMBER_OF_RECIPES;
+          lcdInfo.recipe = recipes[selectedRecipeIndex]->getName();
+          so.signalMBox(mb_lcd, (byte*) &lcdInfo);
         } else if (pressedKey == KEY_5) {
           currentState = COOKING_STATE;
+
+          selectedRecipe = recipes[selectedRecipeIndex];
+
+          sprintf(buff, "User selected recipe %s", selectedRecipe->getName());
+          createLog(&logInfo, LogType::INFO, buff);
+          so.signalMBox(mb_log, (byte*) &logInfo);
         }
-        so.signalMBox(mb_recipe, (byte*) &selectedRecipe);
+        so.signalMBox(mb_recipe, (byte*) &selectedRecipeIndex);
       }
 
       so.signalSem(s_keypad);
     } else if (currentState == COOKING_STATE) {
-      so.waitSem(s_fire);
+      lcdInfo.type = LcdInfoType::SYSTEM_STATE;
+      
+      createLog(&logInfo, LogType::INFO, "Oven currently cooking");
+      so.signalMBox(mb_log, (byte*) &logInfo);
 
+      so.waitSem(s_fire);
       if (fire) {
         so.signalSem(s_fire);
-        dataToSend->id = STOP_COOKING_IDENTIFIER;
-        so.signalMBox(mb_txCan, (byte*) dataToSend);
+
+        dataToSend.id = STOP_COOKING_IDENTIFIER;
+        so.signalMBox(mb_txCan, (byte*) &dataToSend);
+
+        createLog(&logInfo, LogType::FAILURE, "There is a fire");
+        so.signalMBox(mb_log, (byte*) &logInfo);
+
         so.setFlag(f_alarm, maskFire);
         // Por ahora, cuando haya fuego simplemente
         // que se quede en estado idle otra vez y ya
@@ -239,8 +246,12 @@ void taskControl() {
       } else {
         so.signalSem(s_fire);
         if (finished) {
-          so.setFlag(f_alarm, maskFoodDone);
           currentState = IDLE_STATE;
+
+          createLog(&logInfo, LogType::INFO, "Recipe finished!");
+          so.signalMBox(mb_log, (byte*) &logInfo);
+
+          so.setFlag(f_alarm, maskFoodDone);
         }
       }
     }
@@ -264,7 +275,7 @@ void taskLog() {
         term.println(logInfo.msg);
         break;
       case LogType::INFO:
-        term.print("[DEBUG] ");
+        term.print("[INFO] ");
         term.println(logInfo.msg);
         break;
     }
@@ -285,6 +296,9 @@ void taskAlarm() {
 
     if (flagValue == maskFoodDone) {
       for (uint8_t i = 0; i < foodDoneSoundTimes; i++) {
+        hib.ledToggle(0);
+        hib.ledToggle(1);
+        hib.ledToggle(2);
         hib.ledToggle(3);
         hib.ledToggle(4);
         hib.ledToggle(5);
@@ -293,6 +307,9 @@ void taskAlarm() {
       }
     } else if (flagValue == maskFire) {
       for (int i = 0; i < foodDoneBlinks; i++) {
+        hib.ledToggle(0);
+        hib.ledToggle(1);
+        hib.ledToggle(2);
         hib.ledToggle(3);
         hib.ledToggle(4);
         hib.ledToggle(5);
@@ -303,32 +320,39 @@ void taskAlarm() {
         delay(200);
       }
     }
+
+    // Nos aseguramos de que los
+    // leds quedan apagados
+    hib.ledOff(0);
+    hib.ledOff(1);
+    hib.ledOff(2);
+    hib.ledOff(3);
+    hib.ledOff(4);
+    hib.ledOff(5);
   }
 }
 
 void taskLcd() {
   LcdInfo* infoMsg;
   LcdInfo info;
-  char buff[20];
-  //  const char recipeString[] = {
-  //    "Pollo al horno", "Pizza", "Lasaña", "Bizcocho"
-  //  };
-
-  hib.lcdClear();
-  hib.lcdPrint("Bienvenido/a!");
+  char buff[50];
 
   while (true) {
-    so.waitMBox(mb_state, (byte**) &infoMsg);
+    so.waitMBox(mb_lcd, (byte**) &infoMsg);
     info = *infoMsg;
     hib.lcdClear();
+    hib.ledToggle(0);
 
     switch (info.type) {
-      case SYSTEM_STATE_TYPE_MSG:
-        // TODO
-        hib.lcdMoveHome();
+      case LcdInfoType::SYSTEM_STATE:
+        sprintf(buff,
+                "Temp: %d, time: %d",
+                info.state->temperature,
+                info.state->elapsedTime);
+        hib.lcdPrint(buff);
         break;
-      case RECIPE_TYPE_MSG:
-        hib.lcdMoveHome();
+      case LcdInfoType::RECIPE:
+        hib.lcdPrint(info.recipe);
         break;
     }
 
@@ -356,6 +380,13 @@ void playNote(uint8_t note, uint8_t octave, uint16_t duration) {
   float frec = 440.0 * pow(2.0, calc);
 
   hib.buzzPlay(duration, frec);
+}
+
+void createLog(LogInfo* info, LogType type, const char* msg) {
+  char buff[50];
+  info->type = type;
+  sprintf(buff, "%s", msg);
+  info->msg = buff;
 }
 
 void setup() {
@@ -404,6 +435,7 @@ void loop() {
   s_fire = so.defSem(1);
   s_currentTemp = so.defSem(1);
 
+  mb_lcd = so.defMBox();
   mb_recipe = so.defMBox();
   mb_txCan = so.defMBox();
   mb_log = so.defMBox();
@@ -415,12 +447,12 @@ void loop() {
   hib.setUpTimer5(TIMER_TICKS_FOR_125ms, TIMER_PSCALER_FOR_125ms, timer5Hook);
   hib.keySetIntDriven(100, keypadHook);
 
-  //so.defTask(taskControl, 1);
-  //so.defTask(taskAlarm, 2);
-  //so.defTask(taskKeypad, 3);
+  so.defTask(taskControl, 1);
+  so.defTask(taskAlarm, 2);
+  so.defTask(taskKeypad, 3);
   so.defTask(taskLog, 4);
-  //so.defTask(task7Seg, 5);
-  //so.defTask(taskLcd, 6);
+  so.defTask(taskLcd, 5);
+  so.defTask(task7Seg, 6);
 
   so.enterMultiTaskingEnvironment();
 }

@@ -7,3 +7,4 @@ tarea que maneja los dos a la vez
 respectivo mutex s_currentTemp
 - Cambiar tipo de taskLog de periódica (tick) a
 periódica (mbox) y añadir mbox mb_log al diseño.
+- Cambiar nombre del mbox del diseño de mb_state a mb_lcd
