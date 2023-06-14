@@ -3,3 +3,7 @@ en la parte de RxCan de la placa 2
 - Cambiar arquitectura: eliminamos las tareas del
 buzzer y de los leds para unificarlas en una única
 tarea que maneja los dos a la vez
+- Añadir variable currentTemp al diseño con su
+respectivo mutex s_currentTemp
+- Cambiar tipo de taskLog de periódica (tick) a
+periódica (mbox) y añadir mbox mb_log al diseño.

@@ -7,6 +7,7 @@
 #include <HIB.h>
 #include <SO.h>
 #include <timerConfig.h>
+#include <Terminal.h>
 
 #include "C:\\Users\\mirp2\\Documents\\Arduino\\encastats\\practica-final\\canIdentifiers.h"
 #include "recipe.h"
@@ -37,23 +38,34 @@
 #define SYSTEM_STATE_TYPE_MSG 0
 #define RECIPE_TYPE_MSG 1
 
-struct SystemState {
+typedef struct {
   uint16_t temperature;
   uint16_t elapsedTime;
-};
+} SystemState;
 
-struct LcdInfo {
+typedef struct {
   uint8_t type;
   SystemState* data;
+} LcdInfo;
+
+enum LogType {
+  FAILURE,
+  INFO
 };
 
-struct TxData {
+typedef struct {
+  LogType type;
+  char* msg;
+} LogInfo;
+
+typedef struct {
   uint32_t id;
   uint16_t* data;
-};
+} TxData;
 
 HIB hib;
 SO so;
+Terminal term;
 
 const int SPI_CS_PIN = 9;
 MCP_CAN CAN(SPI_CS_PIN);
@@ -63,6 +75,7 @@ MCP_CAN CAN(SPI_CS_PIN);
 ****************************/
 Sem s_keypad;
 Sem s_fire;
+Sem s_currentTemp;
 
 /***************************
   Declaration of mailboxes
@@ -72,6 +85,7 @@ MBox mb_recipe;
 // MBox
 MBox mb_state;
 MBox mb_txCan;
+MBox mb_log;
 
 /***************************
   Declaration of flags
@@ -93,7 +107,12 @@ volatile uint8_t newKey;
 volatile uint8_t pressedKey = hib.NO_KEY;
 volatile bool isKeyNew = false;
 volatile bool fire = false;
+volatile uint16_t currentTemp = 0;
 
+Recipe* chicken;
+Recipe* pizza;
+Recipe* lasagna;
+Recipe* cake;
 
 void ISR_CAN() {
   char auxSREG;
@@ -139,6 +158,9 @@ void taskRxCan() {
         so.signalSem(s_fire);
         break;
       case TEMP_INFO_IDENTIFIER:
+        so.waitSem(s_currentTemp);
+        currentTemp = rx_msg;
+        so.signalSem(s_currentTemp);
         break;
       case GOAL_TEMPERATURE_REACHED_IDENTIFIER:
         break;
@@ -147,8 +169,8 @@ void taskRxCan() {
 }
 
 void taskTxCan() {
-  struct TxData* dataToSendMsg;
-  struct TxData dataToSend;
+  TxData* dataToSendMsg;
+  TxData dataToSend;
 
   while (true) {
     so.waitMBox(mb_txCan, (byte**) &dataToSendMsg);
@@ -175,8 +197,8 @@ void taskControl() {
   int8_t selectedRecipe = 1;
   uint8_t currentState = IDLE_STATE;
   uint8_t lastPressedKey = hib.NO_KEY;
-  struct LcdInfo info;
-  struct TxData* dataToSend = (TxData*) malloc(sizeof(TxData));
+  LcdInfo info;
+  TxData* dataToSend = (TxData*) malloc(sizeof(TxData));
   bool finished = false;
 
   nextActivationTick = so.getTick();
@@ -229,7 +251,24 @@ void taskControl() {
 }
 
 void taskLog() {
+  LogInfo* logInfoMsg;
+  LogInfo logInfo;
 
+  while (true) {
+    so.waitMBox(mb_log, (byte**) &logInfoMsg);
+    logInfo = *logInfoMsg;
+
+    switch (logInfo.type) {
+      case LogType::FAILURE:
+        term.print("[ERROR] ");
+        term.println(logInfo.msg);
+        break;
+      case LogType::INFO:
+        term.print("[DEBUG] ");
+        term.println(logInfo.msg);
+        break;
+    }
+  }
 }
 
 void taskAlarm() {
@@ -268,8 +307,8 @@ void taskAlarm() {
 }
 
 void taskLcd() {
-  struct LcdInfo* infoMsg;
-  struct LcdInfo info;
+  LcdInfo* infoMsg;
+  LcdInfo info;
   char buff[20];
   //  const char recipeString[] = {
   //    "Pollo al horno", "Pizza", "Lasaña", "Bizcocho"
@@ -323,6 +362,7 @@ void setup() {
   Serial.begin(115200);
   hib.begin();
   so.begin();
+  term.begin(115200);
 
   // while (CAN.begin(CAN_500KBPS, MODE_NORMAL, true, false) != CAN_OK) {
   while (CAN.begin(CAN_500KBPS, MODE_LOOPBACK, true, false) != CAN_OK) {
@@ -338,33 +378,35 @@ void setup() {
     {200, 50},
     {150, 10}
   };
-  Recipe chicken("Pollo al horno", 2, chickenPhases);
+  chicken = new Recipe("Pollo al horno", 2, chickenPhases);
 
   Phase pizzaPhases[] = {
     {220, 20}
   };
-  Recipe pizza("Pizza", 1, pizzaPhases);
+  pizza = new Recipe("Pizza", 1, pizzaPhases);
 
   Phase lasagnaPhases[] = {
     {180, 20},
     {200, 8}
   };
-  Recipe lasagna("Lasagna", 2, lasagnaPhases);
+  lasagna = new Recipe("Lasagna", 2, lasagnaPhases);
 
   Phase cakePhases[] = {
     {170, 10},
     {220, 20},
     {150, 10}
   };
-  Recipe cake("Bizcocho", 3, cakePhases);
+  cake = new Recipe("Bizcocho", 3, cakePhases);
 }
 
 void loop() {
   s_keypad = so.defSem(1);
   s_fire = so.defSem(1);
+  s_currentTemp = so.defSem(1);
 
   mb_recipe = so.defMBox();
   mb_txCan = so.defMBox();
+  mb_log = so.defMBox();
 
   f_keypad = so.defFlag();
   f_alarm = so.defFlag();
@@ -373,10 +415,11 @@ void loop() {
   hib.setUpTimer5(TIMER_TICKS_FOR_125ms, TIMER_PSCALER_FOR_125ms, timer5Hook);
   hib.keySetIntDriven(100, keypadHook);
 
-  so.defTask(taskControl, 1);
-  so.defTask(taskAlarm, 2);
-  so.defTask(taskKeypad, 3);
-  so.defTask(task7Seg, 5);
+  //so.defTask(taskControl, 1);
+  //so.defTask(taskAlarm, 2);
+  //so.defTask(taskKeypad, 3);
+  so.defTask(taskLog, 4);
+  //so.defTask(task7Seg, 5);
   //so.defTask(taskLcd, 6);
 
   so.enterMultiTaskingEnvironment();
