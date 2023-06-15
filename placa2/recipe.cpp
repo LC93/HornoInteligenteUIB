@@ -1,20 +1,17 @@
 #include "recipe.h"
 
-Recipe::Recipe(const char* r, uint8_t tp, Phase p[]) :
+Recipe::Recipe(const char* r, uint8_t tp, Phase* p) :
   recipe(r),
-  totalPhases(tp),
-  phases(p) {
-  for (size_t i = 0; i < sizeof(p) / sizeof(Phase); i++) {
-    Serial.println("Temp: "); Serial.println(p[i].temperature);
-    Serial.println("Time: "); Serial.println(p[i].totalTime);
+  totalPhases(tp) {
+  this->phases = new Phase[tp];
 
+  for (size_t i = 0; i < tp; i++) {
+    this->phases[i] = p[i];
   }
-
 }
 
 Phase* Recipe::getPhase() {
-  Serial.print("Temp: "); Serial.println((this->phases + (this->currentPhase * sizeof(Phase)))->temperature);
-  return this->phases + (this->currentPhase * sizeof(Phase));
+  return &(this->phases[this->currentPhase]);
 }
 
 void Recipe::nextPhase() {
@@ -22,7 +19,7 @@ void Recipe::nextPhase() {
 }
 
 bool Recipe::finishedPhases() {
-  return currentPhase > totalPhases;
+  return (currentPhase + 1) > totalPhases;
 }
 
 char* Recipe::getName() {

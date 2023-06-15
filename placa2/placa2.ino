@@ -280,6 +280,13 @@ void taskControl() {
         fire = false;
       } else if (finishedCooking) {
         so.signalSem(s_fire);
+
+        // Reset a todas las variables de control
+        finishedCooking = false;
+        finishedPhase = false;
+        inPhase = false;
+        elapsedTime = 0;
+        
         currentState = IDLE_STATE;
 
         createLog(&logInfo, LogType::INFO, "Recipe finished!");
@@ -305,14 +312,17 @@ void taskControl() {
           so.signalMBox(mb_log, (byte*) &logInfo);
         } else if (!selectedRecipe->finishedPhases() && finishedPhase) {
           finishedPhase = false;
-          selectedRecipe->nextPhase();
           inPhase = false;
+          elapsedTime = 0;
 
           createLog(&logInfo, LogType::INFO, "Finished phase, but not recipe yet");
           so.signalMBox(mb_log, (byte*) &logInfo);
         } else if (!inPhase) {
           currentPhase = selectedRecipe->getPhase();
           inPhase = true;
+
+          Serial.print("Temp: "); Serial.println(currentPhase->temperature);
+          Serial.print("Time: "); Serial.println(currentPhase->totalTime);
 
           createCanMsg(&dataToSend, TEMP_GOAL_IDENTIFIER, 0);
           so.signalMBox(mb_txCan, (byte*) &dataToSend);
@@ -325,6 +335,8 @@ void taskControl() {
             currentPhaseTime = 0;
             finishedPhase = true;
 
+            selectedRecipe->nextPhase();
+            
             createLog(&logInfo, LogType::INFO, "Finished phase");
             so.signalMBox(mb_log, (byte*) &logInfo);
           } else if (reachedGoalTemp && currentPhaseTime == 0) {
@@ -477,14 +489,14 @@ void playNote(uint8_t note, uint8_t octave, uint16_t duration) {
   hib.buzzPlay(duration, frec);
 }
 
-void createLog(LogInfo* info, const LogType type, const char* msg) {
+void createLog(LogInfo* info, LogType type, const char* msg) {
   char buff[50];
   info->type = type;
   sprintf(buff, "%s", msg);
   info->msg = buff;
 }
 
-void createCanMsg(TxData* data, const uint32_t id, const uint16_t msg) {
+void createCanMsg(TxData* data, uint32_t id, uint16_t msg) {
   data->id = id;
   data->data = msg;
 }
