@@ -60,8 +60,6 @@ Sem s_reachedGoalTemp;
   Declaration of mailboxes
 ***************************/
 MBox mb_recipe;
-// Yo le cambiaría el nombre a este
-// MBox
 MBox mb_lcd;
 MBox mb_txCan;
 MBox mb_log;
@@ -274,10 +272,13 @@ void taskControl() {
         so.signalMBox(mb_log, (byte*) &logInfo);
 
         so.setFlag(f_alarm, maskFire);
-        // Por ahora, cuando haya fuego simplemente
-        // que se quede en estado idle otra vez y ya
+
         currentState = IDLE_STATE;
         fire = false;
+        finishedCooking = false;
+        finishedPhase = false;
+        inPhase = false;
+        elapsedTime = 0;
       } else if (finishedCooking) {
         so.signalSem(s_fire);
 
@@ -286,7 +287,7 @@ void taskControl() {
         finishedPhase = false;
         inPhase = false;
         elapsedTime = 0;
-        
+
         currentState = IDLE_STATE;
 
         createLog(&logInfo, LogType::INFO, "Recipe finished!");
@@ -336,7 +337,7 @@ void taskControl() {
             finishedPhase = true;
 
             selectedRecipe->nextPhase();
-            
+
             createLog(&logInfo, LogType::INFO, "Finished phase");
             so.signalMBox(mb_log, (byte*) &logInfo);
           } else if (reachedGoalTemp && currentPhaseTime == 0) {
