@@ -14,7 +14,14 @@
 #include "serialDebug.h"
 
 #define PERIOD_CONTROL_TEMP_TASK 4;
+#define PERIOD_CONTROL_SMOKE_TASK 6;
+#define PERIOD_SIM_SMOKE_TASK 5;
 #define PERIOD_LOOPBACK_CAN_TASK 150; // Para probar can
+
+typedef struct  {
+  uint32_t id;
+  uint16_t data;
+} TxData;
 
 HIB hib;
 SO so;
@@ -29,6 +36,7 @@ Sem s_tempOven;
 Sem s_smokeOven;
 Sem s_tGrill;
 Sem s_goalTemp;
+Sem s_vent;
 
 /***************************
   Declaration of mailboxes
@@ -36,6 +44,8 @@ Sem s_goalTemp;
 MBox mb_tOven;
 MBox mb_smoke;
 MBox mb_tempDataToSend;
+MBox mb_smokeDataToSend;
+
 
 /***************************
   Declaration of flags
@@ -50,12 +60,15 @@ Flag f_temp;
 const unsigned char maskGrillOff = 0x01;
 const unsigned char maskGrillOn = 0x02;
 
+Flag f_vent;
+const unsigned char maskVentOff = 0x01;
+const unsigned char maskVentOn = 0x02;
+
 // Flag and masks to send smoke or temperature
 // to taskTxCan
 Flag f_txCan;
 const unsigned char maskTempSend = 0x01;
-// TODO: CAMBIAR MÁSCARA A 2, EL 0X00 ES SOLO DE PRUEBA
-const unsigned char maskSmokeSend = 0x00;
+const unsigned char maskSmokeSend = 0x02;
 
 // Flag and mask for CAN ISR to tell taskRxCan
 // that a new message has been received
@@ -66,15 +79,11 @@ const unsigned char maskCan = 0x01;
   Declaration of global variables
 **********************************/
 volatile uint8_t tGrill = TGRILL_OFF;
+volatile bool sVent = VENT_OFF;
 volatile uint16_t sampledTempOven;
 volatile float sampledSmokeOven;
 volatile uint16_t slopeTemp;
 volatile uint16_t goalTemp = NO_TEMP_GOAL;
-
-struct TxData {
-  uint32_t id;
-  uint16_t* data;
-};
 
 /*****************
   CAN RX ISR
@@ -106,14 +115,14 @@ void taskLoopbackCan() {
   unsigned long nextActivationTick; // Para probar con tx
   size_t i = 0;
   uint16_t tOvens[] = { 180, 200, 220, 150 };
-  struct TxData data;
+  TxData data;
 
   data.id = TEMP_GOAL_IDENTIFIER;
 
   nextActivationTick = so.getTick(); // Para probar con tx
 
   while (true) {
-    data.data = &tOvens[i];
+    data.data = tOvens[i];
     so.signalMBox(mb_tempDataToSend, (byte *) &data); // Para probar con tx
     so.setFlag(f_txCan, maskTempSend); // Para probar con tx
 
@@ -157,8 +166,8 @@ void taskRxCan() {
 void taskTxCan() {
   unsigned char mask = (maskTempSend | maskSmokeSend);
   unsigned char flagValue;
-  struct TxData* dataToSendMsg;
-  struct TxData dataToSend;
+  TxData* dataToSendMsg;
+  TxData dataToSend;
 
   while (true) {
     so.waitFlag(f_txCan, mask);
@@ -172,12 +181,13 @@ void taskTxCan() {
         break;
       case maskSmokeSend:
         so.clearFlag(f_txCan, maskSmokeSend);
-        // TODO: Same para el humo
+        so.waitMBox(mb_smokeDataToSend, (byte**) &dataToSendMsg);
+        dataToSend = *dataToSendMsg;
         break;
     }
 
     if (CAN.checkPendingTransmission() != CAN_TXPENDING) {
-      CAN.sendMsgBufNonBlocking(dataToSend.id, CAN_EXTID, sizeof(int), (INT8U *) dataToSend.data);
+      CAN.sendMsgBufNonBlocking(dataToSend.id, CAN_EXTID, sizeof(int), (INT8U *) &dataToSend.data);
     }
   }
 }
@@ -239,7 +249,7 @@ void taskControlTemp() {
   float minHysteresis;
   bool reachedGoalTemp = false;
   int16_t lastGoalTemp = NO_TEMP_GOAL;
-  struct TxData dataToSend;
+  TxData dataToSend;
 
   nextActivationTick = so.getTick();
 
@@ -248,9 +258,9 @@ void taskControlTemp() {
     // que funcione bien
     so.waitSem(s_tempOven);
     dataToSend.id = TEMP_INFO_IDENTIFIER;
-    dataToSend.data = &sampledTempOven;
-    so.setFlag(f_txCan, maskTempSend);
+    dataToSend.data = sampledTempOven;
     so.signalMBox(mb_tempDataToSend, (byte *) &dataToSend);
+    so.setFlag(f_txCan, maskTempSend);
     so.signalSem(s_tempOven);
 
     so.waitSem(s_goalTemp);
@@ -278,8 +288,8 @@ void taskControlTemp() {
         reachedGoalTemp = true;
 
         dataToSend.id = GOAL_TEMPERATURE_REACHED_IDENTIFIER;
-        so.setFlag(f_txCan, maskTempSend);
         so.signalMBox(mb_tempDataToSend, (byte *) &dataToSend);
+        so.setFlag(f_txCan, maskTempSend);
       }
 
       so.signalSem(s_tGrill);
@@ -332,18 +342,33 @@ void taskSimSmoke() {
   nextActivationTick = so.getTick();
 
   while (true) {
-    ldrAdcValue = hib.ldrReadAdc(hib.RIGHT_LDR_SENS);
+    so.waitSem(s_vent);
 
-    smokePercentage = 1.0 - (map(ldrAdcValue,
-                          MINIMUM_ADC_VALUE,
-                          MAXIMUM_ADC_VALUE,
-                          MINIMUM_SMOKE_PERCENTAGE,
-                          MAXIMUM_SMOKE_PERCENTAGE
-                         ) / 100.0);
+    // Si el ventilador está apagado, obtendremos
+    // el valor del LDR. En caso contrario, se irá
+    // restando VENT_ON_SUBSTRACTION del valor actual
+    // de smokePercentage hasta que llegue a 0
+    if (!sVent) {
+      ldrAdcValue = hib.ldrReadAdc(hib.RIGHT_LDR_SENS);
+
+      smokePercentage = 1.0 - (map(ldrAdcValue,
+                                   MINIMUM_ADC_VALUE,
+                                   MAXIMUM_ADC_VALUE,
+                                   MINIMUM_SMOKE_PERCENTAGE,
+                                   MAXIMUM_SMOKE_PERCENTAGE
+                                  ) / 100.0);
+    } else {
+      if ((smokePercentage - VENT_ON_SUBSTRACTION) < 0.0) {
+        smokePercentage = 0.0;
+      } else {
+        smokePercentage -= VENT_ON_SUBSTRACTION;
+      }
+    }
+    so.signalSem(s_vent);
 
     so.signalMBox(mb_smoke, (byte*) &smokePercentage);
 
-    nextActivationTick = nextActivationTick + PERIOD_CONTROL_TEMP_TASK;
+    nextActivationTick = nextActivationTick + PERIOD_SIM_SMOKE_TASK;
     so.delayUntilTick(nextActivationTick);
   }
 }
@@ -355,7 +380,7 @@ void taskSensorSmoke() {
   while (true) {
     so.waitMBox(mb_smoke, (byte**) &smokePercentageMsg);
     smokePercentage = *smokePercentageMsg;
-    
+
     so.waitSem(s_smokeOven);
     sampledSmokeOven = smokePercentage;
     so.signalSem(s_smokeOven);
@@ -363,15 +388,54 @@ void taskSensorSmoke() {
 }
 
 void taskControlSmoke() {
-  while (true) {
+  unsigned long nextActivationTick;
+  TxData dataToSend;
 
+  nextActivationTick = so.getTick();
+
+  while (true) {
+    so.waitSem(s_vent);
+    so.waitSem(s_smokeOven);
+
+    Serial.println(sampledSmokeOven);
+    if (sampledSmokeOven >= MAX_ALLOWED_SMOKE && !sVent) {
+      Serial.print("FIRE!!!");
+
+      so.setFlag(f_vent, maskVentOn);
+
+      dataToSend.id = FIRE_IDENTIFIER;
+      so.signalMBox(mb_smokeDataToSend, (byte *) &dataToSend);
+      so.setFlag(f_txCan, maskSmokeSend);
+    } else if (sampledSmokeOven <= MIN_ALLOWED_SMOKE && sVent) {
+      so.setFlag(f_vent, maskVentOff);
+    }
+
+    so.signalSem(s_smokeOven);
+    so.signalSem(s_vent);
+
+    nextActivationTick = nextActivationTick + PERIOD_CONTROL_SMOKE_TASK;
+    so.delayUntilTick(nextActivationTick);
   }
 }
 
 void taskVent() {
-  while (true) {
+  unsigned char mask = (maskVentOff | maskVentOn);
+  unsigned char flagValue;
 
+  while (true) {
+    so.waitFlag(f_vent, mask);
+    flagValue = so.readFlag(f_vent);
+    so.clearFlag(f_vent, mask);
+
+    so.waitSem(s_vent);
+    if (flagValue == maskVentOff && sVent != VENT_OFF) {
+      sVent = VENT_OFF;
+    } else if (flagValue == maskVentOn && sVent != VENT_ON) {
+      sVent = VENT_ON;
+    }
+    so.signalSem(s_vent);
   }
+
 }
 
 void setup() {
@@ -395,15 +459,18 @@ void loop() {
   s_smokeOven = so.defSem(1);
   s_goalTemp = so.defSem(1);
   s_tGrill = so.defSem(1);
+  s_vent = so.defSem(1);
 
   mb_tOven = so.defMBox();
   mb_tempDataToSend = so.defMBox();
+  mb_smokeDataToSend = so.defMBox();
   mb_smoke = so.defMBox();
 
   f_adc = so.defFlag();
   f_temp = so.defFlag();
   f_txCan = so.defFlag();
   f_rxCan = so.defFlag();
+  f_vent = so.defFlag();
 
   hib.setUpTimer5(TIMER_TICKS_FOR_125ms, TIMER_PSCALER_FOR_125ms, timer5Hook);
   hib.adcSetTimerDriven(TIMER_TICKS_FOR_500ms, TIMER_PSCALER_FOR_500ms, adcHook);
@@ -413,12 +480,12 @@ void loop() {
   //  so.defTask(taskSensorTemp, 3);
   //  so.defTask(taskGrill, 4);
   //  so.defTask(taskLoopbackCan, 7);
-  //  so.defTask(taskRxCan, 5);
-  //  so.defTask(taskTxCan, 6);
-  //so.defTask(taskControlSmoke, 1);
+  so.defTask(taskRxCan, 5);
+  so.defTask(taskTxCan, 6);
+  so.defTask(taskControlSmoke, 1);
   so.defTask(taskSimSmoke, 2);
   so.defTask(taskSensorSmoke, 3);
-  //so.defTask(taskVent, 4);
+  so.defTask(taskVent, 4);
 
   so.enterMultiTaskingEnvironment();
 }

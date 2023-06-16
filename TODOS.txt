@@ -1,2 +1,0 @@
-- Cambiar taskSimSmoke de periódica por flag a
-periódica por tick en el diseño
