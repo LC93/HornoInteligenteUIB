@@ -148,11 +148,11 @@ void taskRxCan() {
         break;
 
       // DEBUG
-      case TEMP_GOAL_IDENTIFIER:
-        so.waitSem(s_reachedGoalTemp);
-        reachedGoalTemp = true;
-        so.signalSem(s_reachedGoalTemp);
-        break;
+//      case TEMP_GOAL_IDENTIFIER:
+//        so.waitSem(s_reachedGoalTemp);
+//        reachedGoalTemp = true;
+//        so.signalSem(s_reachedGoalTemp);
+//        break;
     }
   }
 }

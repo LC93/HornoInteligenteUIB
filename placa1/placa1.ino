@@ -26,6 +26,7 @@ MCP_CAN CAN(SPI_CS_PIN);
   Declaration of semaphores
 ****************************/
 Sem s_tempOven;
+Sem s_smokeOven;
 Sem s_tGrill;
 Sem s_goalTemp;
 
@@ -33,6 +34,7 @@ Sem s_goalTemp;
   Declaration of mailboxes
 ***************************/
 MBox mb_tOven;
+MBox mb_smoke;
 MBox mb_tempDataToSend;
 
 /***************************
@@ -137,18 +139,17 @@ void taskRxCan() {
     rx_id = CAN.getRxMsgId();
     CAN.getRxMsgData((byte*) &rx_msg);
 
+    so.waitSem(s_goalTemp);
     switch (rx_id) {
       case TEMP_GOAL_IDENTIFIER:
-        so.waitSem(s_goalTemp);
         goalTemp = rx_msg;
-        so.signalSem(s_goalTemp);
         break;
       case STOP_COOKING_IDENTIFIER:
-        so.waitSem(s_goalTemp);
         goalTemp = NO_TEMP_GOAL;
-        so.signalSem(s_goalTemp);
         break;
     }
+    so.signalSem(s_goalTemp);
+
   }
 }
 
@@ -211,8 +212,6 @@ void taskSimTemp() {
       tOven = TGRILL_ON;
 
     so.signalMBox(mb_tOven, (byte *) &tOven);
-    // hib.ledToggle(1); // DEBUG
-
   }
 }
 
@@ -225,15 +224,11 @@ void taskSensorTemp() {
 
     tOven = *tOvenMessage;
 
-    //Serial.print("Temperatura horno en sensor: "); Serial.println(tOven); // DEBUG
-
     so.waitSem(s_tempOven);
 
     sampledTempOven = tOven;
 
     so.signalSem(s_tempOven);
-
-    // hib.ledToggle(2); // DEBUG
   }
 }
 
@@ -243,28 +238,24 @@ void taskControlTemp() {
   float minHysteresis;
   bool reachedGoalTemp = false;
   int16_t lastGoalTemp = NO_TEMP_GOAL;
-  struct TxData* dataToSend = (TxData*) malloc(sizeof(TxData));
+  struct TxData dataToSend;
 
   nextActivationTick = so.getTick();
 
   while (true) {
-    hib.ledToggle(0);
-
     // TODO: Esto es el logging, hay que probar
     // que funcione bien
     so.waitSem(s_tempOven);
-    dataToSend->id = TEMP_INFO_IDENTIFIER;
-    dataToSend->data = &sampledTempOven;
+    dataToSend.id = TEMP_INFO_IDENTIFIER;
+    dataToSend.data = &sampledTempOven;
     so.setFlag(f_txCan, maskTempSend);
-    so.signalMBox(mb_tempDataToSend, (byte *) dataToSend);
+    so.signalMBox(mb_tempDataToSend, (byte *) &dataToSend);
     so.signalSem(s_tempOven);
 
     so.waitSem(s_goalTemp);
     if (goalTemp != NO_TEMP_GOAL) {
       maxHysteresis = (float) goalTemp + goalTemp * HYSTERESIS_PERCENTAGE;
       minHysteresis = (float) goalTemp - goalTemp * HYSTERESIS_PERCENTAGE;
-      //SERIAL_PRINTLN2("Max hysteresis: ", maxHysteresis);
-      //SERIAL_PRINTLN2("Min hysteresis: ", minHysteresis);
 
       if (goalTemp != lastGoalTemp) {
         lastGoalTemp = goalTemp;
@@ -276,8 +267,6 @@ void taskControlTemp() {
       so.waitSem(s_tempOven);
       so.waitSem(s_tGrill);
 
-      SERIAL_PRINTLN2("Current temp: ", sampledTempOven);
-
       if (sampledTempOven >= maxHysteresis && tGrill != TGRILL_OFF) {
         so.setFlag(f_temp, maskGrillOff);
       } else if (sampledTempOven <= minHysteresis && tGrill != TGRILL_ON) {
@@ -285,24 +274,25 @@ void taskControlTemp() {
       } else if (sampledTempOven < maxHysteresis
                  && sampledTempOven > minHysteresis
                  && !reachedGoalTemp) {
-        //SERIAL_PRINTLN("Goal temp reached!");
         reachedGoalTemp = true;
-        dataToSend->id = GOAL_TEMPERATURE_REACHED_IDENTIFIER;
+
+        dataToSend.id = GOAL_TEMPERATURE_REACHED_IDENTIFIER;
         so.setFlag(f_txCan, maskTempSend);
-        so.signalMBox(mb_tempDataToSend, (byte *) dataToSend);
+        so.signalMBox(mb_tempDataToSend, (byte *) &dataToSend);
       }
 
       so.signalSem(s_tGrill);
       so.signalSem(s_tempOven);
     } else {
-      so.waitSem(s_tGrill);
+      so.signalSem(s_goalTemp);
+
       // Si no hay consigna, hay que asegurarse de
       // que el grill quede apagado
+      so.waitSem(s_tGrill);
       if (tGrill == TGRILL_ON)
         so.setFlag(f_temp, maskGrillOff);
       so.signalSem(s_tGrill);
 
-      so.signalSem(s_goalTemp);
     }
 
     nextActivationTick = nextActivationTick + PERIOD_CONTROL_TEMP_TASK;
@@ -334,7 +324,13 @@ void taskGrill() {
   Smoke-realted tasks
 *************************/
 void taskSimSmoke() {
+  uint16_t ldrAdcValue;
 
+  while (true) {
+    ldrAdcValue = hib.ldrReadAdc(hib.RIGHT_LDR_SENS);
+    Serial.print("Right ldr sensor -> adc = ");
+    Serial.println(ldrAdcValue);
+  }
 }
 
 void taskSensorSmoke() {
@@ -367,11 +363,13 @@ void setup() {
 
 void loop() {
   s_tempOven = so.defSem(1);
+  s_smokeOven = so.defSem(1);
   s_goalTemp = so.defSem(1);
   s_tGrill = so.defSem(1);
 
   mb_tOven = so.defMBox();
   mb_tempDataToSend = so.defMBox();
+  mb_smoke = so.defMBox();
 
   f_adc = so.defFlag();
   f_temp = so.defFlag();
@@ -381,13 +379,17 @@ void loop() {
   hib.setUpTimer5(TIMER_TICKS_FOR_125ms, TIMER_PSCALER_FOR_125ms, timer5Hook);
   hib.adcSetTimerDriven(TIMER_TICKS_FOR_500ms, TIMER_PSCALER_FOR_500ms, adcHook);
 
-  so.defTask(taskControlTemp, 1);
-  so.defTask(taskSimTemp, 2);
-  so.defTask(taskSensorTemp, 3);
-  so.defTask(taskGrill, 4);
-  so.defTask(taskLoopbackCan, 7);
-  so.defTask(taskRxCan, 5);
-  so.defTask(taskTxCan, 6);
+  //  so.defTask(taskControlTemp, 1);
+  //  so.defTask(taskSimTemp, 2);
+  //  so.defTask(taskSensorTemp, 3);
+  //  so.defTask(taskGrill, 4);
+  //  so.defTask(taskLoopbackCan, 7);
+  //  so.defTask(taskRxCan, 5);
+  //  so.defTask(taskTxCan, 6);
+  so.defTask(taskControlSmoke, 1);
+  so.defTask(taskSimSmoke, 2);
+  so.defTask(taskSensorSmoke, 3);
+  so.defTask(taskVent, 4);
 
   so.enterMultiTaskingEnvironment();
 }
