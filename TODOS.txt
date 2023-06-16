@@ -1,5 +1,1 @@
-- Añadir variable "fire" y mutex "s_fire" al diseño
-en la parte de RxCan de la placa 2
-- Añadir variable currentTemp al diseño con su
-respectivo mutex s_currentTemp
-- Añadir variable reachedGoalTemp y s_reachedGoalTemp al diseño
+
