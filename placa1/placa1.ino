@@ -67,6 +67,7 @@ const unsigned char maskCan = 0x01;
 **********************************/
 volatile uint8_t tGrill = TGRILL_OFF;
 volatile uint16_t sampledTempOven;
+volatile float sampledSmokeOven;
 volatile uint16_t slopeTemp;
 volatile uint16_t goalTemp = NO_TEMP_GOAL;
 
@@ -324,25 +325,53 @@ void taskGrill() {
   Smoke-realted tasks
 *************************/
 void taskSimSmoke() {
+  unsigned long nextActivationTick;
   uint16_t ldrAdcValue;
+  float smokePercentage;
+
+  nextActivationTick = so.getTick();
 
   while (true) {
     ldrAdcValue = hib.ldrReadAdc(hib.RIGHT_LDR_SENS);
-    Serial.print("Right ldr sensor -> adc = ");
-    Serial.println(ldrAdcValue);
+
+    smokePercentage = 1.0 - (map(ldrAdcValue,
+                          MINIMUM_ADC_VALUE,
+                          MAXIMUM_ADC_VALUE,
+                          MINIMUM_SMOKE_PERCENTAGE,
+                          MAXIMUM_SMOKE_PERCENTAGE
+                         ) / 100.0);
+
+    so.signalMBox(mb_smoke, (byte*) &smokePercentage);
+
+    nextActivationTick = nextActivationTick + PERIOD_CONTROL_TEMP_TASK;
+    so.delayUntilTick(nextActivationTick);
   }
 }
 
 void taskSensorSmoke() {
+  float* smokePercentageMsg;
+  float smokePercentage;
 
+  while (true) {
+    so.waitMBox(mb_smoke, (byte**) &smokePercentageMsg);
+    smokePercentage = *smokePercentageMsg;
+    
+    so.waitSem(s_smokeOven);
+    sampledSmokeOven = smokePercentage;
+    so.signalSem(s_smokeOven);
+  }
 }
 
 void taskControlSmoke() {
+  while (true) {
 
+  }
 }
 
 void taskVent() {
+  while (true) {
 
+  }
 }
 
 void setup() {
@@ -386,10 +415,10 @@ void loop() {
   //  so.defTask(taskLoopbackCan, 7);
   //  so.defTask(taskRxCan, 5);
   //  so.defTask(taskTxCan, 6);
-  so.defTask(taskControlSmoke, 1);
+  //so.defTask(taskControlSmoke, 1);
   so.defTask(taskSimSmoke, 2);
   so.defTask(taskSensorSmoke, 3);
-  so.defTask(taskVent, 4);
+  //so.defTask(taskVent, 4);
 
   so.enterMultiTaskingEnvironment();
 }
