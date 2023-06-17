@@ -232,10 +232,6 @@ void taskControlTemp() {
   nextActivationTick = so.getTick();
 
   while (true) {
-    // TODO: Esto es el logging, hay que probar
-    // que funcione bien
-
-
     so.waitSem(s_goalTemp);
     if (goalTemp != NO_TEMP_GOAL) {
       so.waitSem(s_tempOven);
@@ -420,8 +416,7 @@ void setup() {
   hib.begin();
   so.begin();
 
-  // while (CAN.begin(CAN_500KBPS, MODE_NORMAL, true, false) != CAN_OK) {
-  while (CAN.begin(CAN_500KBPS, MODE_LOOPBACK, true, false) != CAN_OK) {
+  while (CAN.begin(CAN_500KBPS, MODE_NORMAL, true, false) != CAN_OK) {
     Serial.println("CAN BUS shield initiating");
     delay(100);
   }

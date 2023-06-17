@@ -189,6 +189,7 @@ void taskControl() {
   unsigned long initialPhaseTime;
   unsigned long currentPhaseTime = 0;
   unsigned long elapsedTime;
+  unsigned long totalTime;
   int8_t selectedRecipeIndex = 0;
   uint8_t currentState = IDLE_STATE;
   uint8_t lastPressedKey = hib.NO_KEY;
@@ -351,7 +352,13 @@ void taskControl() {
                      currentPhaseTime != 0 &&
                      elapsedTime < currentPhase->totalTime) {
             currentPhaseTime = millis();
+            totalTime++;
             elapsedTime = (currentPhaseTime - initialPhaseTime) / 1000;
+
+            so.waitSem(s_currentTemp);
+            createLcdInfo(&lcdInfo, LcdInfoType::SYSTEM_STATE, "", currentTemp, elapsedTime);
+            so.signalSem(s_currentTemp);
+            so.signalMBox(mb_lcd, (byte*) &lcdInfo);
 
             sprintf(buff, "Elapsed time: %d", elapsedTime);
             createLog(&logInfo, LogType::INFO, buff);
@@ -520,7 +527,6 @@ void setup() {
   term.begin(115200);
 
   while (CAN.begin(CAN_500KBPS, MODE_NORMAL, true, false) != CAN_OK) {
-    //while (CAN.begin(CAN_500KBPS, MODE_LOOPBACK, true, false) != CAN_OK) {
     Serial.println("CAN BUS shield initiating");
     delay(100);
   }
