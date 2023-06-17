@@ -111,28 +111,6 @@ void timer5Hook() {
   so.updateTime();
 }
 
-void taskLoopbackCan() {
-  unsigned long nextActivationTick; // Para probar con tx
-  size_t i = 0;
-  uint16_t tOvens[] = { 180, 200, 220, 150 };
-  TxData data;
-
-  data.id = TEMP_GOAL_IDENTIFIER;
-
-  nextActivationTick = so.getTick(); // Para probar con tx
-
-  while (true) {
-    data.data = tOvens[i];
-    so.signalMBox(mb_tempDataToSend, (byte *) &data); // Para probar con tx
-    so.setFlag(f_txCan, maskTempSend); // Para probar con tx
-
-    i = (i + 1) % 4;
-
-    nextActivationTick = nextActivationTick + PERIOD_LOOPBACK_CAN_TASK; // Para probar con tx
-    so.delayUntilTick(nextActivationTick); // Para probar con tx
-  }
-}
-
 /************************
   CAN tasks
 *************************/
@@ -256,15 +234,17 @@ void taskControlTemp() {
   while (true) {
     // TODO: Esto es el logging, hay que probar
     // que funcione bien
-    so.waitSem(s_tempOven);
-    dataToSend.id = TEMP_INFO_IDENTIFIER;
-    dataToSend.data = sampledTempOven;
-    so.signalMBox(mb_tempDataToSend, (byte *) &dataToSend);
-    so.setFlag(f_txCan, maskTempSend);
-    so.signalSem(s_tempOven);
+
 
     so.waitSem(s_goalTemp);
     if (goalTemp != NO_TEMP_GOAL) {
+      so.waitSem(s_tempOven);
+      dataToSend.id = TEMP_INFO_IDENTIFIER;
+      dataToSend.data = sampledTempOven;
+      so.signalMBox(mb_tempDataToSend, (byte *) &dataToSend);
+      so.setFlag(f_txCan, maskTempSend);
+      so.signalSem(s_tempOven);
+      
       maxHysteresis = (float) goalTemp + goalTemp * HYSTERESIS_PERCENTAGE;
       minHysteresis = (float) goalTemp - goalTemp * HYSTERESIS_PERCENTAGE;
 
@@ -278,9 +258,9 @@ void taskControlTemp() {
       so.waitSem(s_tempOven);
       so.waitSem(s_tGrill);
 
-      if (sampledTempOven >= maxHysteresis && tGrill != TGRILL_OFF) {
+      if ((sampledTempOven >= maxHysteresis) && (tGrill == TGRILL_ON)) {
         so.setFlag(f_temp, maskGrillOff);
-      } else if (sampledTempOven <= minHysteresis && tGrill != TGRILL_ON) {
+      } else if ((sampledTempOven <= minHysteresis) && (tGrill == TGRILL_OFF)) {
         so.setFlag(f_temp, maskGrillOn);
       } else if (sampledTempOven < maxHysteresis
                  && sampledTempOven > minHysteresis
@@ -397,10 +377,7 @@ void taskControlSmoke() {
     so.waitSem(s_vent);
     so.waitSem(s_smokeOven);
 
-    Serial.println(sampledSmokeOven);
     if (sampledSmokeOven >= MAX_ALLOWED_SMOKE && !sVent) {
-      Serial.print("FIRE!!!");
-
       so.setFlag(f_vent, maskVentOn);
 
       dataToSend.id = FIRE_IDENTIFIER;
@@ -475,17 +452,18 @@ void loop() {
   hib.setUpTimer5(TIMER_TICKS_FOR_125ms, TIMER_PSCALER_FOR_125ms, timer5Hook);
   hib.adcSetTimerDriven(TIMER_TICKS_FOR_500ms, TIMER_PSCALER_FOR_500ms, adcHook);
 
-  //  so.defTask(taskControlTemp, 1);
-  //  so.defTask(taskSimTemp, 2);
-  //  so.defTask(taskSensorTemp, 3);
-  //  so.defTask(taskGrill, 4);
-  //  so.defTask(taskLoopbackCan, 7);
+  so.defTask(taskControlTemp, 1);
+  so.defTask(taskControlSmoke, 1);
+  so.defTask(taskSimTemp, 2);
+  so.defTask(taskSimSmoke, 2);
+  so.defTask(taskSensorTemp, 3);
+  so.defTask(taskSensorSmoke, 3);
+  so.defTask(taskGrill, 4);
+  so.defTask(taskVent, 4);
   so.defTask(taskRxCan, 5);
   so.defTask(taskTxCan, 6);
-  so.defTask(taskControlSmoke, 1);
-  so.defTask(taskSimSmoke, 2);
-  so.defTask(taskSensorSmoke, 3);
-  so.defTask(taskVent, 4);
+
+
 
   so.enterMultiTaskingEnvironment();
 }

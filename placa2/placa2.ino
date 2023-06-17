@@ -147,12 +147,12 @@ void taskRxCan() {
         so.signalSem(s_reachedGoalTemp);
         break;
 
-      // DEBUG
-//      case TEMP_GOAL_IDENTIFIER:
-//        so.waitSem(s_reachedGoalTemp);
-//        reachedGoalTemp = true;
-//        so.signalSem(s_reachedGoalTemp);
-//        break;
+        // DEBUG
+        //      case TEMP_GOAL_IDENTIFIER:
+        //        so.waitSem(s_reachedGoalTemp);
+        //        reachedGoalTemp = true;
+        //        so.signalSem(s_reachedGoalTemp);
+        //        break;
     }
   }
 }
@@ -165,8 +165,11 @@ void taskTxCan() {
     so.waitMBox(mb_txCan, (byte**) &dataToSendMsg);
     dataToSend = *dataToSendMsg;
 
+    Serial.println("Sending msg");
+
     if (CAN.checkPendingTransmission() != CAN_TXPENDING) {
-      CAN.sendMsgBufNonBlocking(dataToSend.id, CAN_EXTID, sizeof(int), (INT8U *) dataToSend.data);
+      
+      CAN.sendMsgBufNonBlocking(dataToSend.id, CAN_EXTID, sizeof(int), (INT8U *) &dataToSend.data);
     }
   }
 }
@@ -322,17 +325,14 @@ void taskControl() {
           currentPhase = selectedRecipe->getPhase();
           inPhase = true;
 
-          Serial.print("Temp: "); Serial.println(currentPhase->temperature);
-          Serial.print("Time: "); Serial.println(currentPhase->totalTime);
-
-          createCanMsg(&dataToSend, TEMP_GOAL_IDENTIFIER, 0);
+          createCanMsg(&dataToSend, TEMP_GOAL_IDENTIFIER, currentPhase->temperature);
           so.signalMBox(mb_txCan, (byte*) &dataToSend);
 
           createLog(&logInfo, LogType::INFO, "Not into phase, sending temperature goal");
           so.signalMBox(mb_log, (byte*) &logInfo);
         } else {
           so.waitSem(s_reachedGoalTemp);
-          if (reachedGoalTemp && elapsedTime >= currentPhase->totalTime) {
+          if (reachedGoalTemp && (elapsedTime >= currentPhase->totalTime)) {
             currentPhaseTime = 0;
             finishedPhase = true;
 
@@ -340,7 +340,7 @@ void taskControl() {
 
             createLog(&logInfo, LogType::INFO, "Finished phase");
             so.signalMBox(mb_log, (byte*) &logInfo);
-          } else if (reachedGoalTemp && currentPhaseTime == 0) {
+          } else if (reachedGoalTemp && (currentPhaseTime == 0)) {
             initialPhaseTime = millis();
             currentPhaseTime = millis();
             elapsedTime = (currentPhaseTime - initialPhaseTime) / 1000;
@@ -393,7 +393,7 @@ void taskAlarm() {
   unsigned char flagValue;
   uint8_t foodDoneBlinks = 20;
   uint8_t foodDoneSoundTimes = 5;
-  uint8_t ticksPerSound = 3;
+  uint8_t ticksPerSound = 1;
 
   while (true) {
     so.waitFlag(f_alarm, mask);
@@ -519,8 +519,8 @@ void setup() {
   so.begin();
   term.begin(115200);
 
-  // while (CAN.begin(CAN_500KBPS, MODE_NORMAL, true, false) != CAN_OK) {
-  while (CAN.begin(CAN_500KBPS, MODE_LOOPBACK, true, false) != CAN_OK) {
+  while (CAN.begin(CAN_500KBPS, MODE_NORMAL, true, false) != CAN_OK) {
+    //while (CAN.begin(CAN_500KBPS, MODE_LOOPBACK, true, false) != CAN_OK) {
     Serial.println("CAN BUS shield initiating");
     delay(100);
   }
@@ -544,7 +544,7 @@ void setup() {
     {180, 20},
     {200, 8}
   };
-  lasagna = new Recipe("Lasagna", 2, lasagnaPhases);
+  lasagna = new Recipe("Lasaña", 2, lasagnaPhases);
 
   Phase cakePhases[] = {
     {170, 10},
@@ -574,12 +574,12 @@ void loop() {
 
   so.defTask(taskControl, 1);
   so.defTask(taskAlarm, 2);
-  so.defTask(taskRxCan, 3);
-  so.defTask(taskTxCan, 3);
-  so.defTask(taskKeypad, 4);
-  so.defTask(taskLog, 5);
-  so.defTask(taskLcd, 6);
-  so.defTask(task7Seg, 7);
+  so.defTask(taskKeypad, 3);
+  so.defTask(taskLog, 4);
+  so.defTask(taskLcd, 5);
+  so.defTask(task7Seg, 6);
+  so.defTask(taskRxCan, 7);
+  so.defTask(taskTxCan, 8);
 
   so.enterMultiTaskingEnvironment();
 }

@@ -18,5 +18,4 @@ class Recipe {
     void nextPhase();
     bool finishedPhases();
     char* getName();
-
 };
