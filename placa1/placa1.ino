@@ -174,7 +174,7 @@ void taskTxCan() {
   Temperature-realted tasks
 *****************************/
 void taskSimTemp() {
-  uint16_t tOven = 0;
+  int16_t tOven = 0;
   float mappedSlope;
 
   while (true) {
@@ -234,13 +234,6 @@ void taskControlTemp() {
   while (true) {
     so.waitSem(s_goalTemp);
     if (goalTemp != NO_TEMP_GOAL) {
-      so.waitSem(s_tempOven);
-      dataToSend.id = TEMP_INFO_IDENTIFIER;
-      dataToSend.data = sampledTempOven;
-      so.signalMBox(mb_tempDataToSend, (byte *) &dataToSend);
-      so.setFlag(f_txCan, maskTempSend);
-      so.signalSem(s_tempOven);
-      
       maxHysteresis = (float) goalTemp + goalTemp * HYSTERESIS_PERCENTAGE;
       minHysteresis = (float) goalTemp - goalTemp * HYSTERESIS_PERCENTAGE;
 
@@ -271,6 +264,9 @@ void taskControlTemp() {
       so.signalSem(s_tGrill);
       so.signalSem(s_tempOven);
     } else {
+      so.waitSem(s_tempOven);
+      so.signalSem(s_tempOven);
+
       so.signalSem(s_goalTemp);
 
       // Si no hay consigna, hay que asegurarse de
@@ -281,6 +277,13 @@ void taskControlTemp() {
       so.signalSem(s_tGrill);
 
     }
+
+    so.waitSem(s_tempOven);
+    dataToSend.id = TEMP_INFO_IDENTIFIER;
+    dataToSend.data = sampledTempOven;
+    so.signalMBox(mb_tempDataToSend, (byte *) &dataToSend);
+    so.setFlag(f_txCan, maskTempSend);
+    so.signalSem(s_tempOven);
 
     nextActivationTick = nextActivationTick + PERIOD_CONTROL_TEMP_TASK;
     so.delayUntilTick(nextActivationTick);
@@ -417,6 +420,7 @@ void setup() {
   so.begin();
 
   while (CAN.begin(CAN_500KBPS, MODE_NORMAL, true, false) != CAN_OK) {
+    //while (CAN.begin(CAN_500KBPS, MODE_LOOPBACK, true, false) != CAN_OK) {
     Serial.println("CAN BUS shield initiating");
     delay(100);
   }
@@ -457,8 +461,6 @@ void loop() {
   so.defTask(taskVent, 4);
   so.defTask(taskRxCan, 5);
   so.defTask(taskTxCan, 6);
-
-
 
   so.enterMultiTaskingEnvironment();
 }

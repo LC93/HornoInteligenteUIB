@@ -124,7 +124,6 @@ void taskRxCan() {
     so.waitFlag(f_rxCan, maskCan);
     so.clearFlag(f_rxCan, maskCan);
 
-    hib.ledToggle(0);
     CAN.readRxMsg();
 
     rx_id = CAN.getRxMsgId();
@@ -168,7 +167,6 @@ void taskTxCan() {
     Serial.println("Sending msg");
 
     if (CAN.checkPendingTransmission() != CAN_TXPENDING) {
-      
       CAN.sendMsgBufNonBlocking(dataToSend.id, CAN_EXTID, sizeof(int), (INT8U *) &dataToSend.data);
     }
   }
@@ -189,7 +187,6 @@ void taskControl() {
   unsigned long initialPhaseTime;
   unsigned long currentPhaseTime = 0;
   unsigned long elapsedTime;
-  unsigned long totalTime;
   int8_t selectedRecipeIndex = 0;
   uint8_t currentState = IDLE_STATE;
   uint8_t lastPressedKey = hib.NO_KEY;
@@ -215,12 +212,16 @@ void taskControl() {
   so.signalMBox(mb_lcd, (byte*) &lcdInfo);
 
   nextActivationTick = so.getTick();
-  so.signalMBox(mb_lcd, (byte*) &lcdInfo);
 
   while (true) {
     if (currentState == IDLE_STATE) {
-      lcdInfo.type = LcdInfoType::RECIPE;
 
+      createLcdInfo(&lcdInfo,
+                    LcdInfoType::RECIPE,
+                    recipes[selectedRecipeIndex]->getName(),
+                    0,
+                    0);
+      so.signalMBox(mb_lcd, (byte*) &lcdInfo);
       createLog(&logInfo, LogType::INFO, "Oven in idle state");
       so.signalMBox(mb_log, (byte*) &logInfo);
 
@@ -283,6 +284,10 @@ void taskControl() {
         finishedPhase = false;
         inPhase = false;
         elapsedTime = 0;
+        
+        so.waitSem(s_reachedGoalTemp);
+        reachedGoalTemp = false;
+        so.signalSem(s_reachedGoalTemp);
       } else if (finishedCooking) {
         so.signalSem(s_fire);
 
@@ -291,6 +296,10 @@ void taskControl() {
         finishedPhase = false;
         inPhase = false;
         elapsedTime = 0;
+
+        so.waitSem(s_reachedGoalTemp);
+        reachedGoalTemp = false;
+        so.signalSem(s_reachedGoalTemp);
 
         currentState = IDLE_STATE;
 
@@ -319,6 +328,10 @@ void taskControl() {
           finishedPhase = false;
           inPhase = false;
           elapsedTime = 0;
+          so.waitSem(s_reachedGoalTemp);
+          reachedGoalTemp = false;
+          so.signalSem(s_reachedGoalTemp);
+
 
           createLog(&logInfo, LogType::INFO, "Finished phase, but not recipe yet");
           so.signalMBox(mb_log, (byte*) &logInfo);
@@ -352,7 +365,6 @@ void taskControl() {
                      currentPhaseTime != 0 &&
                      elapsedTime < currentPhase->totalTime) {
             currentPhaseTime = millis();
-            totalTime++;
             elapsedTime = (currentPhaseTime - initialPhaseTime) / 1000;
 
             so.waitSem(s_currentTemp);
@@ -398,9 +410,9 @@ void taskLog() {
 void taskAlarm() {
   unsigned char mask = (maskFoodDone | maskFire);
   unsigned char flagValue;
-  uint8_t foodDoneBlinks = 20;
+  uint8_t fireBlinks = 20;
   uint8_t foodDoneSoundTimes = 5;
-  uint8_t ticksPerSound = 1;
+  uint8_t ticksPerSound = 3;
 
   while (true) {
     so.waitFlag(f_alarm, mask);
@@ -419,7 +431,7 @@ void taskAlarm() {
         delay(500);
       }
     } else if (flagValue == maskFire) {
-      for (int i = 0; i < foodDoneBlinks; i++) {
+      for (int i = 0; i < fireBlinks; i++) {
         hib.ledToggle(0);
         hib.ledToggle(1);
         hib.ledToggle(2);
