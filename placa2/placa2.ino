@@ -10,6 +10,7 @@
 #include <Terminal.h>
 
 #include "C:\\Users\\mirp2\\Documents\\Arduino\\encastats\\practica-final\\canIdentifiers.h"
+//#include "canIdentifiers.h"
 #include "recipe.h"
 #include "lcd_and_logging.h"
 
@@ -20,18 +21,9 @@
 
 #define NUMBER_OF_RECIPES 4
 
-#define KEY_1 0
 #define KEY_2 1
-#define KEY_3 2
-#define KEY_4 3
 #define KEY_5 4
-#define KEY_6 5
-#define KEY_7 6
 #define KEY_8 7
-#define KEY_9 8
-#define KEY_STAR 9
-#define KEY_0 10
-#define KEY_HASHTAG 11
 
 #define OCTAVE 7
 #define SOL 8
@@ -145,13 +137,6 @@ void taskRxCan() {
         reachedGoalTemp = true;
         so.signalSem(s_reachedGoalTemp);
         break;
-
-        // DEBUG
-        //      case TEMP_GOAL_IDENTIFIER:
-        //        so.waitSem(s_reachedGoalTemp);
-        //        reachedGoalTemp = true;
-        //        so.signalSem(s_reachedGoalTemp);
-        //        break;
     }
   }
 }
@@ -163,8 +148,6 @@ void taskTxCan() {
   while (true) {
     so.waitMBox(mb_txCan, (byte**) &dataToSendMsg);
     dataToSend = *dataToSendMsg;
-
-    Serial.println("Sending msg");
 
     if (CAN.checkPendingTransmission() != CAN_TXPENDING) {
       CAN.sendMsgBufNonBlocking(dataToSend.id, CAN_EXTID, sizeof(int), (INT8U *) &dataToSend.data);
@@ -267,46 +250,35 @@ void taskControl() {
       so.signalMBox(mb_log, (byte*) &logInfo);
 
       so.waitSem(s_fire);
-      if (fire) {
-        so.signalSem(s_fire);
+      if (fire || finishedCooking) {
+        // Reset a todas las variables de control
+        currentState = IDLE_STATE;
+        finishedPhase = false;
+        inPhase = false;
+        elapsedTime = 0;
+        so.waitSem(s_reachedGoalTemp);
+        reachedGoalTemp = false;
+        so.signalSem(s_reachedGoalTemp);
 
-        dataToSend.id = STOP_COOKING_IDENTIFIER;
+        // Envía el mensaje CAN para parar de cocinar
+        createCanMsg(&dataToSend, STOP_COOKING_IDENTIFIER, 0);
         so.signalMBox(mb_txCan, (byte*) &dataToSend);
 
-        createLog(&logInfo, LogType::FAILURE, "There is a fire");
-        so.signalMBox(mb_log, (byte*) &logInfo);
+        if (fire) {
+          fire = false;
+          finishedCooking = false;
+          createLog(&logInfo, LogType::FAILURE, "There is a fire");
+          so.signalMBox(mb_log, (byte*) &logInfo);
+          so.setFlag(f_alarm, maskFire);
+        } else if (finishedCooking) {
+          finishedCooking = false;
+          fire = false;
+          createLog(&logInfo, LogType::INFO, "Recipe finished!");
+          so.signalMBox(mb_log, (byte*) &logInfo);
 
-        so.setFlag(f_alarm, maskFire);
-
-        currentState = IDLE_STATE;
-        fire = false;
-        finishedCooking = false;
-        finishedPhase = false;
-        inPhase = false;
-        elapsedTime = 0;
-        
-        so.waitSem(s_reachedGoalTemp);
-        reachedGoalTemp = false;
-        so.signalSem(s_reachedGoalTemp);
-      } else if (finishedCooking) {
+          so.setFlag(f_alarm, maskFoodDone);
+        }
         so.signalSem(s_fire);
-
-        // Reset a todas las variables de control
-        finishedCooking = false;
-        finishedPhase = false;
-        inPhase = false;
-        elapsedTime = 0;
-
-        so.waitSem(s_reachedGoalTemp);
-        reachedGoalTemp = false;
-        so.signalSem(s_reachedGoalTemp);
-
-        currentState = IDLE_STATE;
-
-        createLog(&logInfo, LogType::INFO, "Recipe finished!");
-        so.signalMBox(mb_log, (byte*) &logInfo);
-
-        so.setFlag(f_alarm, maskFoodDone);
       } else {
         so.signalSem(s_fire);
 
@@ -319,11 +291,6 @@ void taskControl() {
 
         if (selectedRecipe->finishedPhases() && finishedPhase) {
           finishedCooking = true;
-          createCanMsg(&dataToSend, STOP_COOKING_IDENTIFIER, 0);
-          so.signalMBox(mb_txCan, (byte*) &dataToSend);
-
-          createLog(&logInfo, LogType::INFO, "Finished");
-          so.signalMBox(mb_log, (byte*) &logInfo);
         } else if (!selectedRecipe->finishedPhases() && finishedPhase) {
           finishedPhase = false;
           inPhase = false;
@@ -509,19 +476,19 @@ void playNote(uint8_t note, uint8_t octave, uint16_t duration) {
   hib.buzzPlay(duration, frec);
 }
 
-void createLog(LogInfo* info, LogType type, const char* msg) {
+void createLog(LogInfo * info, LogType type, const char* msg) {
   char buff[50];
   info->type = type;
   sprintf(buff, "%s", msg);
   info->msg = buff;
 }
 
-void createCanMsg(TxData* data, uint32_t id, uint16_t msg) {
+void createCanMsg(TxData * data, uint32_t id, uint16_t msg) {
   data->id = id;
   data->data = msg;
 }
 
-void createLcdInfo(LcdInfo* info,
+void createLcdInfo(LcdInfo * info,
                    LcdInfoType type,
                    char* recipe,
                    uint16_t temperature,

@@ -6,12 +6,12 @@
 #include <SO.h>
 #include <timerConfig.h>
 
-#include "temperature.h"
+#include "temperature_and_smoke.h"
 // A falta de mejor solución, hay que copiar
 // el path completo al header porque Arduino no
 // soporta includes relativos
 #include "C:\\Users\\mirp2\\Documents\\Arduino\\encastats\\practica-final\\canIdentifiers.h"
-#include "serialDebug.h"
+//#include "canIdentifiers.h"
 
 #define PERIOD_CONTROL_TEMP_TASK 4;
 #define PERIOD_CONTROL_SMOKE_TASK 6;
