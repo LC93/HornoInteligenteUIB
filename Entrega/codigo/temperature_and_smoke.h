@@ -1,0 +1,25 @@
+#define MINIMUM_ADC_VALUE     0
+#define MAXIMUM_ADC_VALUE     1023
+
+#define MINIMUM_SLOPE_VALUE   1
+#define MAXIMUM_SLOPE_VALUE   10
+
+#define MINIMUM_SMOKE_PERCENTAGE 0
+#define MAXIMUM_SMOKE_PERCENTAGE 100
+
+#define TGRILL_OFF  0
+#define TGRILL_ON   250
+
+#define VENT_OFF false
+#define VENT_ON true
+
+#define VENT_ON_SUBSTRACTION 0.1
+
+#define MAX_ALLOWED_SMOKE 0.7
+#define MIN_ALLOWED_SMOKE 0.2
+
+#define NO_TEMP_GOAL -1
+
+#define HYSTERESIS_PERCENTAGE 0.05
+
+ 

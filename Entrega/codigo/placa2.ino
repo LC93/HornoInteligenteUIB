@@ -9,8 +9,8 @@
 #include <timerConfig.h>
 #include <Terminal.h>
 
-//#include "C:\\Users\\mirp2\\Documents\\Arduino\\encastats\\practica-final\\canIdentifiers.h"
-#include "canIdentifiers.h"
+#include "C:\\Users\\mirp2\\Documents\\Arduino\\encastats\\practica-final\\canIdentifiers.h"
+//#include "canIdentifiers.h"
 #include "recipe.h"
 #include "lcd_and_logging.h"
 

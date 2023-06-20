@@ -10,8 +10,8 @@
 // A falta de mejor solución, hay que copiar
 // el path completo al header porque Arduino no
 // soporta includes relativos
-//#include "C:\\Users\\mirp2\\Documents\\Arduino\\encastats\\practica-final\\canIdentifiers.h"
-#include "canIdentifiers.h"
+#include "C:\\Users\\mirp2\\Documents\\Arduino\\encastats\\practica-final\\canIdentifiers.h"
+//#include "canIdentifiers.h"
 
 #define PERIOD_CONTROL_TEMP_TASK 4;
 #define PERIOD_CONTROL_SMOKE_TASK 6;
@@ -279,7 +279,6 @@ void taskControlTemp() {
     }
 
     so.waitSem(s_tempOven);
-      
     dataToSend.id = TEMP_INFO_IDENTIFIER;
     dataToSend.data = sampledTempOven;
     so.signalMBox(mb_tempDataToSend, (byte *) &dataToSend);
